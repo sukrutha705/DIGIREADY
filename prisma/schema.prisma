@@ -1,0 +1,214 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// System health verification model (Phase 1)
+model SystemHealth {
+  id        String   @id @default(uuid())
+  status    String   @default("ok")
+  checkedAt DateTime @default(now())
+}
+
+// Synthetic Demo User (Phase 2 - Synthetic demonstration user only)
+model User {
+  id               String             @id @default(uuid())
+  displayName      String
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  documents        Document[]
+  identityEvidence IdentityEvidence[]
+  shares           DocumentShare[]
+
+  @@map("users")
+}
+
+// Canonical Document Type Registry (Phase 2 - Document Ontology)
+model DocumentType {
+  id                  String               @id @default(uuid())
+  canonicalKey        String               @unique
+  displayName         String
+  category            String
+  description         String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  aliases             DocumentAlias[]
+  documents           Document[]
+  serviceRequirements ServiceRequirement[]
+
+  @@index([category])
+  @@map("document_types")
+}
+
+// Document Type Aliases for Deterministic Name Resolution (Phase 2)
+model DocumentAlias {
+  id              String       @id @default(uuid())
+  documentTypeId  String
+  documentType    DocumentType @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  alias           String
+  normalizedAlias String       @unique
+  createdAt       DateTime     @default(now())
+
+  @@index([normalizedAlias])
+  @@map("document_aliases")
+}
+
+// Synthetic Document Vault (Phase 2)
+// NOTE: Sensitive document binaries and raw OCR contents are NOT persisted.
+model Document {
+  id                     String             @id @default(uuid())
+  userId                 String
+  user                   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentTypeId         String
+  documentType           DocumentType       @relation(fields: [documentTypeId], references: [id])
+  displayName            String
+  source                 String             // "ISSUED" | "UPLOADED"
+  issuer                 String
+  issueDate              DateTime?
+  expiryDate             DateTime?
+  imageStorageKey        String?            // Safe unique file key or relative path
+  mimeType               String?            // "image/jpeg" | "image/png" | "image/webp"
+  fileSize               Int?               // File size in bytes
+  extractionStatus       String?            // "SUCCESS" | "NEEDS_REVIEW" | "UNSUPPORTED"
+  extractionConfidence   Float?             // 0.0 - 1.0
+  extractedMetadataJson  String?            // JSON serialization of raw extracted field details
+  extractionWarningsJson String?            // JSON array of warnings
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  fields                 DocumentField[]
+  identityEvidence       IdentityEvidence[]
+  shares                 DocumentShare[]
+
+  @@index([userId])
+  @@index([documentTypeId])
+  @@map("documents")
+}
+
+// Normalized Non-Sensitive Synthetic Demonstration Attributes (Phase 2 & Phase 5)
+// NOTE: For demonstration purposes only. Production architectures must use ephemeral, session-based analysis for sensitive extracted data.
+model DocumentField {
+  id                String             @id @default(uuid())
+  documentId        String
+  document          Document           @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fieldName         String
+  fieldType         String             // "TEXT" | "DATE" | "NAME" | "ORGANIZATION" | "ADDRESS" | "IDENTIFIER"
+  semanticRole      String?            // "CANDIDATE_NAME" | "PARENT_NAME" | "DATE_OF_BIRTH" | "IDENTIFIER" | "ADDRESS" | "ORGANIZATION" | "OTHER"
+  normalizedValue   String
+  isUserCorrected   Boolean            @default(false)
+  rawExtractedValue String?
+  createdAt         DateTime           @default(now())
+  identityEvidence  IdentityEvidence[]
+
+  @@index([documentId])
+  @@index([fieldName])
+  @@index([semanticRole])
+  @@map("document_fields")
+}
+
+// Identity Evidence Model (Phase 5 - Derived Cross-Document Identity Representations)
+// Supports N documents, N candidate-name values, N parent-name values, N DOB values.
+model IdentityEvidence {
+  id              String         @id @default(uuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentId      String
+  document        Document       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fieldId         String?
+  field           DocumentField? @relation(fields: [fieldId], references: [id], onDelete: SetNull)
+  semanticRole    String         // "CANDIDATE_NAME" | "PARENT_NAME" | "DATE_OF_BIRTH" | "IDENTIFIER" | "ADDRESS" | "ORGANIZATION" | "OTHER"
+  normalizedValue String
+  createdAt       DateTime       @default(now())
+
+  @@index([userId])
+  @@index([documentId])
+  @@index([semanticRole])
+  @@map("identity_evidence")
+}
+
+// Public Service / Examination Definition (Phase 3 - Generic Service Engine)
+model Service {
+  id               String               @id @default(uuid())
+  serviceKey       String               @unique
+  name             String
+  shortDescription String
+  category         String               // "EXAMINATION" | "CERTIFICATE" | "SCHOLARSHIP" | "EMPLOYMENT" | "TAX" | "PENSION" | "GRIEVANCE" | "OTHER"
+  providerName     String               // Strictly synthetic (e.g. "Demo Karnataka Examination Authority")
+  active           Boolean              @default(true)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  requirements     ServiceRequirement[]
+
+  @@index([category])
+  @@map("services")
+}
+
+// Service Requirement Specification mapping to Canonical Document Types (Phase 3)
+model ServiceRequirement {
+  id              String            @id @default(uuid())
+  serviceId       String
+  service         Service           @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  documentTypeId  String
+  documentType    DocumentType      @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
+  requirementKey  String
+  label           String
+  description     String?
+  requirementType String            // "REQUIRED" | "OPTIONAL" | "CONDITIONAL"
+  conditionKey    String?           // Structured condition identifier (e.g. "DOMICILE_ELIGIBILITY_CLAUSE")
+  sortOrder       Int               @default(0)
+  sourceId        String
+  source          RequirementSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([serviceId, requirementKey])
+  @@index([serviceId])
+  @@index([documentTypeId])
+  @@index([sourceId])
+  @@map("service_requirements")
+}
+
+// Requirement Provenance & Source Metadata (Phase 3 & Phase 5)
+model RequirementSource {
+  id           String               @id @default(uuid())
+  name         String
+  sourceType   String               // "OFFICIAL_REFERENCE" | "OFFICIAL_API" | "MOCK_REFERENCE" | "MOCK_API" | "MANUAL_ENTRY"
+  referenceUrl String?
+  retrievedAt  DateTime?
+  notes        String?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  requirements ServiceRequirement[]
+
+  @@map("requirement_sources")
+}
+
+// Controlled Document Share & Consent Grant (Phase 7.5)
+model DocumentShare {
+  id                 String    @id @default(uuid())
+  shareToken         String    @unique
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentId         String
+  document           Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  recipientName      String
+  purpose            String
+  status             String    @default("ACTIVE") // "ACTIVE" | "EXPIRED" | "REVOKED"
+  sharedFieldIdsJson String    @default("[]")    // JSON array of selected field IDs
+  canView            Boolean   @default(true)
+  canDownload        Boolean   @default(false)
+  expiresAt          DateTime
+  revokedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([documentId])
+  @@index([shareToken])
+  @@index([status])
+  @@map("document_shares")
+}
+
