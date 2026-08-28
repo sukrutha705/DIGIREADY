@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getApplicationWindowInfo } from "@/server/application-window/service";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ service: string }> }

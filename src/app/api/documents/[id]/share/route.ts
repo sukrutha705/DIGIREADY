@@ -7,6 +7,8 @@ import {
   ShareNotFoundError,
 } from "@/server/sharing/service";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }

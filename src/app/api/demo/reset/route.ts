@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getDemoUser } from "@/server/vault";
 
+export const dynamic = "force-dynamic";
+
 export async function POST() {
   try {
     const demoUser = await getDemoUser(prisma);

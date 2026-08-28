@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDocumentGuidance } from "@/server/guidance/registry";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ document: string }> }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDemoUser } from "@/server/vault";
 import { getServiceReadiness } from "@/server/services/readiness";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ service: string }> }

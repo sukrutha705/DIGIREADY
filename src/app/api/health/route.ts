@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { HealthCheckResponse } from "@/types";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(): Promise<NextResponse<HealthCheckResponse>> {
   try {
     // Verify database connectivity

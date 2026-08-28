@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDemoUser } from "@/server/vault";
 import { getDocumentImageStream } from "@/server/documents/extraction/service";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

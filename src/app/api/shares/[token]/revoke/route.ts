@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDemoUser } from "@/server/vault";
 import { revokeDocumentShare, ShareNotFoundError } from "@/server/sharing/service";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ token?: string; id?: string }> }

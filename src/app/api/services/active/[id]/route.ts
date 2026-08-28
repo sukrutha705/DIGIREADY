@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDemoUser } from "@/server/vault";
 import { removeUserActivePreparation } from "@/server/services/active";
 
+export const dynamic = "force-dynamic";
+
 export async function DELETE(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }

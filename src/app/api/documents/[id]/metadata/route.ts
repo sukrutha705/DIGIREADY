@@ -4,6 +4,8 @@ import { updateDocumentMetadata } from "@/server/documents/extraction/service";
 import { getVaultConsistencyAssessment } from "@/server/consistency/service";
 import { getApplicationJourney } from "@/server/journey/service";
 
+export const dynamic = "force-dynamic";
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

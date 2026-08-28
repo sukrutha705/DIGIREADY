@@ -20,6 +20,8 @@ import type { ApplicationJourney } from "@/server/journey/types";
 import type { ConsistencyAssessment } from "@/server/consistency/types";
 import { resolveDocumentType } from "@/server/ontology";
 
+export const dynamic = "force-dynamic";
+
 async function generateAssistantResponse(
   intent: AssistantIntent,
   explicitUserId?: string

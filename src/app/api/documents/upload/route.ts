@@ -3,6 +3,8 @@ import { getDemoUser } from "@/server/vault";
 import { processDocumentUpload } from "@/server/documents/extraction/service";
 import { UserNotFoundError } from "@/server/readiness";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
