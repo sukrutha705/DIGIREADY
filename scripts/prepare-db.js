@@ -2,8 +2,10 @@
  * DigiReady Database Provider & Environment Preparation Script
  *
  * Automatically switches Prisma schema datasource provider between:
- * - "sqlite" (Local development, offline testing, fallback)
- * - "postgresql" (Vercel production deployments with hosted PostgreSQL e.g. Vercel Postgres / Neon / Supabase)
+ * - "sqlite" (Render production, local development, offline testing, fallback)
+ * - "postgresql" (Production deployments with hosted PostgreSQL e.g. Vercel Postgres / Neon / Supabase)
+ *
+ * Ensures database tables exist and canonical demo data is seeded before application start.
  */
 
 const fs = require('fs');
@@ -22,7 +24,7 @@ function prepareDatabase() {
     process.env.DATABASE_URL ||
     process.env.POSTGRES_PRISMA_URL ||
     process.env.POSTGRES_URL ||
-    '';
+    'file:./dev.db';
 
   const isPostgres =
     rawDbUrl.startsWith('postgresql://') ||
@@ -49,52 +51,41 @@ function prepareDatabase() {
   const clientIndex = path.join(__dirname, '..', 'node_modules', '.prisma', 'client', 'index.js');
   const clientMissing = !fs.existsSync(clientIndex);
 
-  if (updated) {
+  if (updated || clientMissing) {
     fs.writeFileSync(schemaPath, schemaContent, 'utf8');
     console.log(`[prepare-db] Adjusted prisma/schema.prisma datasource provider to: ${targetProvider}`);
     try {
-      console.log('[prepare-db] Regenerating Prisma Client for provider:', targetProvider);
+      console.log('[prepare-db] Generating Prisma Client for provider:', targetProvider);
       execSync('npx prisma generate', { stdio: 'inherit' });
     } catch (err) {
-      console.warn('[prepare-db] Prisma generate warning (continuing build):', err.message);
-    }
-  } else if (clientMissing) {
-    console.log('[prepare-db] Prisma client missing. Generating Prisma client...');
-    try {
-      execSync('npx prisma generate', { stdio: 'inherit' });
-    } catch (err) {
-      console.warn('[prepare-db] Prisma generate warning (continuing build):', err.message);
+      console.warn('[prepare-db] Prisma generate warning:', err.message);
     }
   } else {
     console.log(`[prepare-db] prisma/schema.prisma provider is currently: ${targetProvider}`);
   }
 
-  // Automatic schema synchronization & seeding for hosted PostgreSQL in Vercel / CI deployments
-  if (isPostgres && (process.env.VERCEL || process.env.AUTO_MIGRATE === 'true')) {
-    const activeUrl = rawDbUrl;
-    console.log('[prepare-db] Production Vercel/PostgreSQL deployment detected.');
-    try {
-      console.log('[prepare-db] Synchronizing PostgreSQL schema with prisma db push...');
-      execSync('npx prisma db push --skip-generate --accept-data-loss', {
-        stdio: 'inherit',
-        env: {
-          ...process.env,
-          DATABASE_URL: activeUrl,
-        },
-      });
+  // Automatic schema synchronization & seeding for SQLite and PostgreSQL
+  try {
+    console.log(`[prepare-db] Synchronizing database schema via prisma db push (${targetProvider})...`);
+    execSync('npx prisma db push --skip-generate', {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        DATABASE_URL: rawDbUrl,
+      },
+    });
 
-      console.log('[prepare-db] Seeding initial canonical services and demo records...');
-      execSync('npx tsx prisma/seed.ts', {
-        stdio: 'inherit',
-        env: {
-          ...process.env,
-          DATABASE_URL: activeUrl,
-        },
-      });
-      console.log('[prepare-db] Database initialization completed successfully.');
-    } catch (err) {
-      console.warn('[prepare-db] Automatic DB push/seed warning (non-fatal):', err.message || err);
-    }
+    console.log('[prepare-db] Seeding initial canonical services and demo records...');
+    execSync('npx tsx prisma/seed.ts', {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        DATABASE_URL: rawDbUrl,
+      },
+    });
+    console.log('[prepare-db] Database initialization completed successfully.');
+  } catch (err) {
+    console.warn('[prepare-db] Automatic DB push/seed warning (non-fatal):', err.message || err);
   }
 }
 

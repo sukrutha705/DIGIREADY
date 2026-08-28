@@ -6,6 +6,7 @@
 import { prisma } from "@/lib/prisma";
 import type { PrismaClient } from "@prisma/client";
 import { UserNotFoundError } from "@/server/readiness";
+import { getUserDocuments } from "@/server/vault";
 import {
   normalizeName,
   normalizeDob,
@@ -30,18 +31,67 @@ export async function getVaultConsistencyAssessment(
     throw new UserNotFoundError(userId || "EMPTY_USER_ID");
   }
 
-  const user = await db.user.findUnique({
-    where: { id: trimmedUserId },
-    include: {
-      documents: {
-        include: {
-          documentType: true,
-          fields: true,
+  let user: {
+    id: string;
+    documents: Array<{
+      id: string;
+      displayName: string;
+      issuer?: string | null;
+      documentType: { canonicalKey: string; category: string };
+      fields: Array<{
+        fieldName: string;
+        semanticRole: string | null;
+        normalizedValue: string;
+      }>;
+    }>;
+  } | null = null;
+
+  try {
+    const dbUser = await db.user.findUnique({
+      where: { id: trimmedUserId },
+      include: {
+        documents: {
+          include: {
+            documentType: true,
+            fields: true,
+          },
+          orderBy: { createdAt: "asc" },
         },
-        orderBy: { createdAt: "asc" },
       },
-    },
-  });
+    });
+
+    if (dbUser) {
+      user = dbUser;
+    }
+  } catch (err) {
+    console.warn(
+      "[Consistency] Database query failed or uninitialized. Using safe document fallback:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
+  if (!user) {
+    const fallbackDocs = await getUserDocuments(trimmedUserId, undefined, db);
+    if (fallbackDocs && fallbackDocs.length > 0) {
+      user = {
+        id: trimmedUserId,
+        documents: fallbackDocs.map((d) => ({
+          id: d.id,
+          displayName: d.displayName,
+          issuer: d.issuer || null,
+          documentType: {
+            canonicalKey: d.documentTypeKey,
+            category: d.category,
+          },
+          fields: d.fields.map((f) => ({
+            fieldName: f.fieldName,
+            semanticRole: f.semanticRole,
+            normalizedValue: f.normalizedValue,
+          })),
+        })),
+      };
+    }
+  }
 
   if (!user) {
     return {
@@ -216,7 +266,7 @@ export async function getVaultConsistencyAssessment(
 
   const rawDocsMap: Record<string, { issuer: string; rawExtractedValue?: string }> = {};
   user.documents.forEach((d) => {
-    rawDocsMap[d.id] = { issuer: d.issuer };
+    rawDocsMap[d.id] = { issuer: d.issuer || "Official Authority" };
   });
 
   const rawComparisons: FieldConsistencyComparison[] = [
