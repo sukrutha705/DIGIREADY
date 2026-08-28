@@ -9,8 +9,12 @@ export function getPrismaClient(): PrismaClient {
     return globalForPrisma.prisma;
   }
 
-  // Safe fallback for local development, demo mode, and build-time static evaluation
-  const databaseUrl = process.env.DATABASE_URL || "file:./dev.db";
+  // Safe fallback for local development (SQLite) or production cloud databases (PostgreSQL)
+  const databaseUrl =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL ||
+    "file:./dev.db";
 
   const client = new PrismaClient({
     datasources: {
@@ -24,9 +28,7 @@ export function getPrismaClient(): PrismaClient {
         : ["error"],
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    globalForPrisma.prisma = client;
-  }
+  globalForPrisma.prisma = client;
 
   return client;
 }

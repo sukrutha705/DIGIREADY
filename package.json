@@ -3,15 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node scripts/prepare-db.js && next dev",
+    "build": "node scripts/prepare-db.js && next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "db:generate": "prisma generate",
-    "db:push": "prisma db push",
-    "db:seed": "tsx prisma/seed.ts"
+    "test": "node scripts/prepare-db.js && vitest run",
+    "test:watch": "node scripts/prepare-db.js && vitest",
+    "db:generate": "node scripts/prepare-db.js && prisma generate",
+    "db:push": "node scripts/prepare-db.js && prisma db push",
+    "db:seed": "node scripts/prepare-db.js && tsx prisma/seed.ts",
+    "db:deploy": "node scripts/prepare-db.js && prisma db push && tsx prisma/seed.ts",
+    "postinstall": "node scripts/prepare-db.js && prisma generate"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

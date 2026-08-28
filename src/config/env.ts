@@ -6,9 +6,15 @@ const envSchema = z.object({
   PORT: z.string().optional().default("3000"),
 });
 
+const rawDbUrl =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  process.env.POSTGRES_URL ||
+  "file:./dev.db";
+
 const parsedEnv = envSchema.safeParse({
   NODE_ENV: process.env.NODE_ENV,
-  DATABASE_URL: process.env.DATABASE_URL,
+  DATABASE_URL: rawDbUrl,
   PORT: process.env.PORT,
 });
 
