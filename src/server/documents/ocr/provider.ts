@@ -153,7 +153,21 @@ async function runOCRWithTimeout(imageBuffer: Buffer): Promise<OCRResult> {
   await ocrQueue.enqueue(async () => {
     // 1. Ensure worker is ready before starting the recognize timeout race
     const tInitStart = Date.now();
-    const worker = await getOrCreateWorker();
+    let worker: any = null;
+    try {
+      worker = await getOrCreateWorker();
+    } catch (workerErr) {
+      console.warn("[OCR] Worker initialization unavailable in serverless environment, falling back safely:", workerErr instanceof Error ? workerErr.message : workerErr);
+      result = {
+        text: "",
+        confidence: 0,
+        lines: [],
+        warnings: [
+          "OCR processing engine unavailable in this serverless environment. Document recorded safely for review.",
+        ],
+      };
+      return;
+    }
     const initElapsed = Date.now() - tInitStart;
 
     // 2. Start recognition timeout race

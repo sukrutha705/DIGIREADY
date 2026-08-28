@@ -44,40 +44,68 @@ export async function resolveDocumentType(
     return null;
   }
 
-  // 1. Direct canonical key match (e.g., input is "HIGHER_SECONDARY_MARKS_CARD" or "higher_secondary_marks_card")
-  const canonicalFormatted = trimmed.toUpperCase().replace(/[\s-]+/g, "_");
-  const directType = await db.documentType.findUnique({
-    where: { canonicalKey: canonicalFormatted },
-  });
-  if (directType) {
-    return directType;
-  }
-
-  // 2. Query all document types and their aliases to resolve normalized forms
-  // Note: For hackathon and production registry scale (dozens/hundreds of document types), this is deterministic and extremely fast.
-  const allDocumentTypes = await db.documentType.findMany({
-    include: {
-      aliases: true,
-    },
-  });
-
-  // Check normalized canonical keys and display names
-  for (const docType of allDocumentTypes) {
-    if (
-      normalizeDocumentName(docType.canonicalKey) === normalized ||
-      normalizeDocumentName(docType.displayName) === normalized
-    ) {
-      return docType;
+  try {
+    // 1. Direct canonical key match (e.g., input is "HIGHER_SECONDARY_MARKS_CARD" or "higher_secondary_marks_card")
+    const canonicalFormatted = trimmed.toUpperCase().replace(/[\s-]+/g, "_");
+    const directType = await db.documentType.findUnique({
+      where: { canonicalKey: canonicalFormatted },
+    });
+    if (directType) {
+      return directType;
     }
-  }
 
-  // Check normalized aliases
-  for (const docType of allDocumentTypes) {
-    for (const aliasRecord of docType.aliases) {
-      if (aliasRecord.normalizedAlias === normalized) {
-        return docType;
+    // 2. Query all document types and their aliases to resolve normalized forms
+    const allDocumentTypes = await db.documentType.findMany({
+      include: {
+        aliases: true,
+      },
+    });
+
+    if (allDocumentTypes && allDocumentTypes.length > 0) {
+      // Check normalized canonical keys and display names
+      for (const docType of allDocumentTypes) {
+        if (
+          normalizeDocumentName(docType.canonicalKey) === normalized ||
+          normalizeDocumentName(docType.displayName) === normalized
+        ) {
+          return docType;
+        }
+      }
+
+      // Check normalized aliases
+      for (const docType of allDocumentTypes) {
+        for (const aliasRecord of docType.aliases) {
+          if (aliasRecord.normalizedAlias === normalized) {
+            return docType;
+          }
+        }
       }
     }
+  } catch (err) {
+    console.warn("[Ontology] Database query failed. Resolving from canonical fallback list:", err instanceof Error ? err.message : err);
+  }
+
+  // Resilient fallback resolution
+  const { FALLBACK_CANONICAL_TYPES } = await import("./demo-fallback");
+  const canonicalFormatted = trimmed.toUpperCase().replace(/[\s-]+/g, "_");
+  const matched = FALLBACK_CANONICAL_TYPES.find(
+    (t) =>
+      t.canonicalKey === canonicalFormatted ||
+      normalizeDocumentName(t.canonicalKey) === normalized ||
+      normalizeDocumentName(t.displayName) === normalized ||
+      t.aliases.some((a) => normalizeDocumentName(a) === normalized)
+  );
+
+  if (matched) {
+    return {
+      id: matched.id,
+      canonicalKey: matched.canonicalKey,
+      displayName: matched.displayName,
+      category: matched.category,
+      description: matched.displayName,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
   }
 
   return null;

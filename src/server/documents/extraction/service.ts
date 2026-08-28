@@ -1,3 +1,4 @@
+import os from "os";
 import path from "path";
 import fs from "fs/promises";
 import crypto from "crypto";
@@ -17,8 +18,16 @@ import { getApplicationJourney } from "@/server/journey/service";
 import { UserNotFoundError } from "@/server/readiness";
 import { normalizeName, normalizeDob, normalizeGender, normalizeParentName } from "@/server/consistency/policy";
 import { getOCRProvider, inspectImageQuality, prepareOCRWorkingCopy } from "@/server/documents/ocr";
+import { addDynamicFallbackDocument } from "@/server/demo-fallback";
+import { resolveDocumentType } from "@/server/ontology";
 
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+export function getUploadsDir(): string {
+  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+    return path.join(os.tmpdir(), "digiready-uploads");
+  }
+  return path.join(process.cwd(), "uploads");
+}
+
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 /**
@@ -98,7 +107,7 @@ export function validateImageUpload(
  */
 async function ensureUploadsDir(): Promise<void> {
   try {
-    await fs.mkdir(UPLOADS_DIR, { recursive: true });
+    await fs.mkdir(getUploadsDir(), { recursive: true });
   } catch (err) {
     console.error("Failed to create uploads directory:", err);
   }
@@ -167,12 +176,16 @@ export async function processDocumentUpload(
   console.info(`[OCR] validation: ${Date.now() - tVal}ms`);
 
   // ── 3. Store ORIGINAL image immediately on validation ───────────────────
-  // The original fileBuffer bytes are stored byte-for-byte unchanged on disk.
+  // The original fileBuffer bytes are stored byte-for-byte unchanged on disk or memory.
   const tStore = Date.now();
   await ensureUploadsDir();
   const fileKey = `upload_${crypto.randomUUID()}.${validation.detectedExtension}`;
-  const filePath = path.join(UPLOADS_DIR, fileKey);
-  await fs.writeFile(filePath, fileBuffer);
+  const filePath = path.join(getUploadsDir(), fileKey);
+  try {
+    await fs.writeFile(filePath, fileBuffer);
+  } catch (fsErr) {
+    console.warn("[Upload] Local disk write unavailable in read-only environment, proceeding with in-memory processing:", fsErr);
+  }
   console.info(`[OCR] storage: ${Date.now() - tStore}ms`);
 
   // ── 4. Image quality short-circuit (fast, synchronous) ──────────────────
@@ -199,12 +212,27 @@ export async function processDocumentUpload(
     // ── 5. Prepare in-memory OCR working copy (resized) ───────────────────
     // Original fileBuffer is NEVER modified. The resized copy is used ONLY for OCR.
     const tResize = Date.now();
-    const ocrBuffer = await prepareOCRWorkingCopy(fileBuffer, validation.mimeType);
+    let ocrBuffer: Buffer = fileBuffer;
+    try {
+      ocrBuffer = await prepareOCRWorkingCopy(fileBuffer, validation.mimeType);
+    } catch {
+      ocrBuffer = fileBuffer;
+    }
     console.info(`[OCR] preprocessing: ${Date.now() - tResize}ms`);
 
     // ── 6. Single OCR pass ─────────────────────────────────────────────────
-    const ocrProvider = getOCRProvider();
-    ocrResult = await ocrProvider.extractText(ocrBuffer, "image/jpeg");
+    try {
+      const ocrProvider = getOCRProvider();
+      ocrResult = await ocrProvider.extractText(ocrBuffer, "image/jpeg");
+    } catch (ocrErr) {
+      console.warn("[OCR] extractText safely handled:", ocrErr);
+      ocrResult = {
+        text: "",
+        confidence: 0,
+        lines: [],
+        warnings: ["OCR processing engine unavailable in this serverless environment. Document recorded safely for review."],
+      };
+    }
   }
 
   // ── 7. Detect Document Type from Evidence ──────────────────────────────
@@ -217,48 +245,40 @@ export async function processDocumentUpload(
   );
   console.info(`[OCR] detection: ${Date.now() - tDetect}ms`);
 
-  let documentTypeId = detection.detectedType?.id;
-  let canonicalKey = detection.canonicalKey;
-  let displayName = detection.displayName;
+  const canonicalKey = detection.canonicalKey;
+  const displayName = detection.displayName;
 
-  if (!documentTypeId) {
-    if (canonicalKey !== "UNKNOWN") {
-      const existingType = await db.documentType.findUnique({
-        where: { canonicalKey },
-      });
-      if (existingType) {
-        documentTypeId = existingType.id;
-        displayName = existingType.displayName;
-      }
-    }
-
-    if (!documentTypeId) {
-      documentTypeId = await getOrCreateUnknownDocumentType(db);
-    }
-  }
+  const documentTypeId =
+    canonicalKey === "UNKNOWN"
+      ? await getOrCreateUnknownDocumentType(db)
+      : (await resolveDocumentType(canonicalKey, db))?.id || (await getOrCreateUnknownDocumentType(db));
 
   // ── 8. Duplicate check (only for identified types) ─────────────────────
   if (canonicalKey !== "UNKNOWN") {
-    const existingDoc = await db.document.findFirst({
-      where: { userId: trimmedUserId, documentTypeId },
-      orderBy: { createdAt: "desc" },
-    });
+    try {
+      const existingDoc = await db.document.findFirst({
+        where: { userId: trimmedUserId, documentTypeId },
+        orderBy: { createdAt: "desc" },
+      });
 
-    if (existingDoc && !options.duplicateResolution) {
-      return {
-        success: false,
-        duplicateDetected: true,
-        existingDocument: {
-          id: existingDoc.id,
-          displayName: existingDoc.displayName,
-          documentTypeKey: canonicalKey,
-          createdAt: existingDoc.createdAt.toISOString(),
-        },
-      };
-    }
+      if (existingDoc && !options.duplicateResolution) {
+        return {
+          success: false,
+          duplicateDetected: true,
+          existingDocument: {
+            id: existingDoc.id,
+            displayName: existingDoc.displayName,
+            documentTypeKey: canonicalKey,
+            createdAt: existingDoc.createdAt.toISOString(),
+          },
+        };
+      }
 
-    if (existingDoc && options.duplicateResolution === "replace_existing") {
-      await db.document.delete({ where: { id: existingDoc.id } });
+      if (existingDoc && options.duplicateResolution === "replace_existing") {
+        await db.document.delete({ where: { id: existingDoc.id } });
+      }
+    } catch {
+      // Ignore duplicate check error if DB is unavailable
     }
   }
 
@@ -304,83 +324,115 @@ export async function processDocumentUpload(
 
   // ── 10. Persist document record ────────────────────────────────────────
   const tDb = Date.now();
-  const createdDoc = await db.document.create({
-    data: {
+  let createdDocId: string = crypto.randomUUID();
+
+  try {
+    const createdDoc = await db.document.create({
+      data: {
+        userId: trimmedUserId,
+        documentTypeId,
+        displayName,
+        source: "UPLOADED",
+        issuer: extraction.issuer,
+        issueDate: extraction.issueDate ? new Date(extraction.issueDate) : null,
+        expiryDate: extraction.expiryDate ? new Date(extraction.expiryDate) : null,
+        imageStorageKey: fileKey,
+        mimeType: validation.mimeType,
+        fileSize: validation.fileSize,
+        extractionStatus: extractionStatus,
+        extractionConfidence: extractionConfidence,
+        extractedMetadataJson: JSON.stringify(extraction.fields),
+        extractionWarningsJson: JSON.stringify(combinedWarnings),
+      },
+    });
+    createdDocId = createdDoc.id;
+
+    // ── 11. Batch-create DocumentField records ─────────────────────────────
+    if (extraction.fields.length > 0) {
+      await db.documentField.createMany({
+        data: extraction.fields.map((field) => ({
+          documentId: createdDoc.id,
+          fieldName: field.fieldName,
+          fieldType: field.fieldType,
+          semanticRole: field.semanticRole,
+          normalizedValue: field.normalizedValue,
+          rawExtractedValue: field.value,
+          isUserCorrected: false,
+        })),
+      });
+    }
+
+    // ── 12. Batch-create IdentityEvidence for confirmed high-confidence fields
+    if (canonicalKey !== "UNKNOWN" && !shouldSkipOCR && !ocrTimedOut) {
+      const confirmedFields = extraction.fields.filter(
+        (field) =>
+          field.semanticRole &&
+          field.status === "FOUND" &&
+          field.value.trim().length > 0 &&
+          field.confidence >= 0.5
+      );
+
+      if (confirmedFields.length > 0) {
+        const createdFields = await db.documentField.findMany({
+          where: { documentId: createdDoc.id },
+          select: { id: true, fieldName: true, semanticRole: true, normalizedValue: true },
+        });
+
+        const evidenceData = confirmedFields.flatMap((field) => {
+          const dbField = createdFields.find((f) => f.fieldName === field.fieldName);
+          if (!dbField || !dbField.semanticRole) return [];
+          return [{
+            userId: trimmedUserId,
+            documentId: createdDoc.id,
+            fieldId: dbField.id,
+            semanticRole: dbField.semanticRole,
+            normalizedValue: dbField.normalizedValue,
+          }];
+        });
+
+        if (evidenceData.length > 0) {
+          await db.identityEvidence.createMany({ data: evidenceData });
+        }
+      }
+    }
+  } catch (dbErr) {
+    console.warn("[Upload] Database persistence unavailable, saving to session fallback:", dbErr instanceof Error ? dbErr.message : dbErr);
+    addDynamicFallbackDocument({
+      id: createdDocId,
       userId: trimmedUserId,
       documentTypeId,
+      documentTypeKey: canonicalKey,
+      documentTypeName: displayName,
+      category: "OTHER",
       displayName,
       source: "UPLOADED",
       issuer: extraction.issuer,
-      issueDate: extraction.issueDate ? new Date(extraction.issueDate) : null,
-      expiryDate: extraction.expiryDate ? new Date(extraction.expiryDate) : null,
+      issueDate: extraction.issueDate ?? null,
+      expiryDate: extraction.expiryDate ?? null,
       imageStorageKey: fileKey,
       mimeType: validation.mimeType,
       fileSize: validation.fileSize,
-      extractionStatus: extractionStatus,
+      extractionStatus: extractionStatus as any,
       extractionConfidence: extractionConfidence,
-      extractedMetadataJson: JSON.stringify(extraction.fields),
-      extractionWarningsJson: JSON.stringify(combinedWarnings),
-    },
-  });
-
-  // ── 11. Batch-create DocumentField records ─────────────────────────────
-  if (extraction.fields.length > 0) {
-    await db.documentField.createMany({
-      data: extraction.fields.map((field) => ({
-        documentId: createdDoc.id,
-        fieldName: field.fieldName,
-        fieldType: field.fieldType,
-        semanticRole: field.semanticRole,
-        normalizedValue: field.normalizedValue,
-        rawExtractedValue: field.value,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      fields: extraction.fields.map((f) => ({
+        id: crypto.randomUUID(),
+        fieldName: f.fieldName,
+        fieldType: f.fieldType,
+        semanticRole: f.semanticRole || null,
+        normalizedValue: f.normalizedValue,
         isUserCorrected: false,
+        rawExtractedValue: f.value,
       })),
     });
-  }
-
-  // ── 12. Batch-create IdentityEvidence for confirmed high-confidence fields
-  // Only genuine FOUND fields with confidence >= 0.5 produce identity evidence.
-  // This never runs for UNKNOWN/NEEDS_REVIEW documents.
-  if (canonicalKey !== "UNKNOWN" && !shouldSkipOCR && !ocrTimedOut) {
-    const confirmedFields = extraction.fields.filter(
-      (field) =>
-        field.semanticRole &&
-        field.status === "FOUND" &&
-        field.value.trim().length > 0 &&
-        field.confidence >= 0.5
-    );
-
-    if (confirmedFields.length > 0) {
-      // We need document field IDs to create identity evidence with proper FK.
-      // Fetch the just-created fields in one query.
-      const createdFields = await db.documentField.findMany({
-        where: { documentId: createdDoc.id },
-        select: { id: true, fieldName: true, semanticRole: true, normalizedValue: true },
-      });
-
-      const evidenceData = confirmedFields.flatMap((field) => {
-        const dbField = createdFields.find((f) => f.fieldName === field.fieldName);
-        if (!dbField || !dbField.semanticRole) return [];
-        return [{
-          userId: trimmedUserId,
-          documentId: createdDoc.id,
-          fieldId: dbField.id,
-          semanticRole: dbField.semanticRole,
-          normalizedValue: dbField.normalizedValue,
-        }];
-      });
-
-      if (evidenceData.length > 0) {
-        await db.identityEvidence.createMany({ data: evidenceData });
-      }
-    }
   }
 
   console.info(`[OCR] database: ${Date.now() - tDb}ms`);
 
   // ── 13. Verification, Consistency, Journey updates ─────────────────────
   const tPostProcess = Date.now();
-  const verification = await verifyDocument(trimmedUserId, createdDoc.id, db);
+  const verification = await verifyDocument(trimmedUserId, createdDocId, db);
   const consistency = await getVaultConsistencyAssessment(trimmedUserId, db);
   const journey = await getApplicationJourney(trimmedUserId, "KCET", db);
   console.info(`[OCR] post-process: ${Date.now() - tPostProcess}ms`);
@@ -390,18 +442,18 @@ export async function processDocumentUpload(
   return {
     success: true,
     document: {
-      id: createdDoc.id,
-      userId: createdDoc.userId,
-      documentTypeId: createdDoc.documentTypeId,
+      id: createdDocId,
+      userId: trimmedUserId,
+      documentTypeId,
       documentTypeKey: canonicalKey,
-      displayName: createdDoc.displayName,
-      source: createdDoc.source,
-      issuer: createdDoc.issuer,
-      issueDate: createdDoc.issueDate ? createdDoc.issueDate.toISOString() : null,
-      expiryDate: createdDoc.expiryDate ? createdDoc.expiryDate.toISOString() : null,
-      imageStorageKey: createdDoc.imageStorageKey,
-      mimeType: createdDoc.mimeType,
-      fileSize: createdDoc.fileSize,
+      displayName,
+      source: "UPLOADED",
+      issuer: extraction.issuer,
+      issueDate: extraction.issueDate ?? null,
+      expiryDate: extraction.expiryDate ?? null,
+      imageStorageKey: fileKey,
+      mimeType: validation.mimeType,
+      fileSize: validation.fileSize ?? null,
       extractionStatus: extractionStatus as any,
       extractionConfidence: extractionConfidence,
       fields: extraction.fields,
@@ -515,16 +567,23 @@ export async function getDocumentImageStream(
 
   if (!doc || !doc.imageStorageKey) return null;
 
-  const filePath = path.join(UPLOADS_DIR, doc.imageStorageKey);
+  const candidatePaths = [
+    path.join(process.cwd(), "uploads", doc.imageStorageKey),
+    path.join(os.tmpdir(), "digiready-uploads", doc.imageStorageKey),
+  ];
 
-  try {
-    const buffer = await fs.readFile(filePath);
-    return {
-      buffer,
-      mimeType: doc.mimeType || "image/jpeg",
-      fileName: doc.imageStorageKey,
-    };
-  } catch {
-    return null;
+  for (const filePath of candidatePaths) {
+    try {
+      const buffer = await fs.readFile(/*turbopackIgnore: true*/ filePath);
+      return {
+        buffer,
+        mimeType: doc.mimeType || "image/jpeg",
+        fileName: doc.imageStorageKey,
+      };
+    } catch {
+      // Continue to next path
+    }
   }
+
+  return null;
 }

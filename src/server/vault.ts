@@ -55,23 +55,35 @@ export interface UserVaultSummary {
   recentDocuments: VaultDocumentDTO[];
 }
 
+import {
+  getFallbackDemoUser,
+  getBaselineVaultDocuments,
+  FALLBACK_DEMO_USER_ID,
+} from "./demo-fallback";
+
 /**
  * Retrieves the synthetic demo user for demonstration sessions.
+ * Falls back gracefully to in-memory baseline user if database is unseeded/unavailable.
  */
 export async function getDemoUser(db: PrismaClient = prisma): Promise<User> {
-  const user = await db.user.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
+  try {
+    const user = await db.user.findFirst({
+      orderBy: { createdAt: "asc" },
+    });
 
-  if (!user) {
-    throw new UserNotFoundError("DEMO_USER_NOT_FOUND");
+    if (user) {
+      return user;
+    }
+  } catch (err) {
+    console.warn("[Vault] Database query failed or unavailable. Using resilient demo baseline:", err instanceof Error ? err.message : String(err));
   }
 
-  return user;
+  return getFallbackDemoUser();
 }
 
 /**
  * Retrieves filtered documents from the user's synthetic document vault.
+ * Falls back gracefully to in-memory baseline documents if database is unseeded/unavailable.
  */
 export async function getUserDocuments(
   userId: string,
@@ -83,70 +95,104 @@ export async function getUserDocuments(
     throw new UserNotFoundError(userId || "EMPTY_USER_ID");
   }
 
-  const whereClause: Record<string, any> = {
-    userId: trimmedUserId,
-  };
-
-  if (filters?.source && filters.source !== "ALL") {
-    whereClause.source = filters.source.toUpperCase();
-  }
-
-  if (filters?.category && filters.category !== "ALL") {
-    whereClause.documentType = {
-      category: filters.category.toUpperCase(),
+  try {
+    const whereClause: Record<string, any> = {
+      userId: trimmedUserId,
     };
-  }
 
-  if (filters?.search && filters.search.trim()) {
-    const term = filters.search.trim();
-    whereClause.OR = [
-      { displayName: { contains: term } },
-      { issuer: { contains: term } },
-      { documentType: { displayName: { contains: term } } },
-      { documentType: { canonicalKey: { contains: term.toUpperCase() } } },
-    ];
-  }
+    if (filters?.source && filters.source !== "ALL") {
+      whereClause.source = filters.source.toUpperCase();
+    }
 
-  const docs = await db.document.findMany({
-    where: whereClause,
-    include: {
-      documentType: true,
-      fields: {
-        orderBy: { createdAt: "asc" },
+    if (filters?.category && filters.category !== "ALL") {
+      whereClause.documentType = {
+        category: filters.category.toUpperCase(),
+      };
+    }
+
+    if (filters?.search && filters.search.trim()) {
+      const term = filters.search.trim();
+      whereClause.OR = [
+        { displayName: { contains: term } },
+        { issuer: { contains: term } },
+        { documentType: { displayName: { contains: term } } },
+        { documentType: { canonicalKey: { contains: term.toUpperCase() } } },
+      ];
+    }
+
+    const docs = await db.document.findMany({
+      where: whereClause,
+      include: {
+        documentType: true,
+        fields: {
+          orderBy: { createdAt: "asc" },
+        },
       },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+      orderBy: { createdAt: "desc" },
+    });
 
-  return docs.map((doc) => ({
-    id: doc.id,
-    userId: doc.userId,
-    documentTypeId: doc.documentTypeId,
-    documentTypeKey: doc.documentType.canonicalKey,
-    documentTypeName: doc.documentType.displayName,
-    category: doc.documentType.category,
-    displayName: doc.displayName,
-    source: doc.source,
-    issuer: doc.issuer,
-    issueDate: doc.issueDate ? doc.issueDate.toISOString() : null,
-    expiryDate: doc.expiryDate ? doc.expiryDate.toISOString() : null,
-    imageStorageKey: doc.imageStorageKey,
-    mimeType: doc.mimeType,
-    fileSize: doc.fileSize,
-    extractionStatus: doc.extractionStatus,
-    extractionConfidence: doc.extractionConfidence,
-    createdAt: doc.createdAt.toISOString(),
-    updatedAt: doc.updatedAt.toISOString(),
-    fields: doc.fields.map((f) => ({
-      id: f.id,
-      fieldName: f.fieldName,
-      fieldType: f.fieldType,
-      semanticRole: f.semanticRole,
-      normalizedValue: f.normalizedValue,
-      isUserCorrected: f.isUserCorrected,
-      rawExtractedValue: f.rawExtractedValue,
-    })),
-  }));
+    if (docs) {
+      let mapped = docs.map((doc) => ({
+        id: doc.id,
+        userId: doc.userId,
+        documentTypeId: doc.documentTypeId,
+        documentTypeKey: doc.documentType.canonicalKey,
+        documentTypeName: doc.documentType.displayName,
+        category: doc.documentType.category,
+        displayName: doc.displayName,
+        source: doc.source,
+        issuer: doc.issuer,
+        issueDate: doc.issueDate ? doc.issueDate.toISOString() : null,
+        expiryDate: doc.expiryDate ? doc.expiryDate.toISOString() : null,
+        imageStorageKey: doc.imageStorageKey,
+        mimeType: doc.mimeType,
+        fileSize: doc.fileSize,
+        extractionStatus: doc.extractionStatus,
+        extractionConfidence: doc.extractionConfidence,
+        createdAt: doc.createdAt.toISOString(),
+        updatedAt: doc.updatedAt.toISOString(),
+        fields: doc.fields.map((f) => ({
+          id: f.id,
+          fieldName: f.fieldName,
+          fieldType: f.fieldType,
+          semanticRole: f.semanticRole,
+          normalizedValue: f.normalizedValue,
+          isUserCorrected: f.isUserCorrected,
+          rawExtractedValue: f.rawExtractedValue,
+        })),
+      }));
+
+      if (filters?.source && filters.source !== "ALL") {
+        mapped = mapped.filter((d) => d.source === filters.source?.toUpperCase());
+      }
+      if (filters?.category && filters.category !== "ALL") {
+        mapped = mapped.filter((d) => d.category === filters.category?.toUpperCase());
+      }
+      return mapped;
+    }
+  } catch (err) {
+    console.warn("[Vault] getUserDocuments database query failed. Using resilient demo baseline:", err instanceof Error ? err.message : String(err));
+  }
+
+  // Resilient fallback filtering
+  let fallbackDocs = getBaselineVaultDocuments(trimmedUserId);
+  if (filters?.source && filters.source !== "ALL") {
+    fallbackDocs = fallbackDocs.filter((d) => d.source === filters.source?.toUpperCase());
+  }
+  if (filters?.category && filters.category !== "ALL") {
+    fallbackDocs = fallbackDocs.filter((d) => d.category === filters.category?.toUpperCase());
+  }
+  if (filters?.search && filters.search.trim()) {
+    const term = filters.search.trim().toLowerCase();
+    fallbackDocs = fallbackDocs.filter(
+      (d) =>
+        d.displayName.toLowerCase().includes(term) ||
+        d.issuer.toLowerCase().includes(term) ||
+        d.documentTypeName.toLowerCase().includes(term) ||
+        d.documentTypeKey.toLowerCase().includes(term)
+    );
+  }
+  return fallbackDocs;
 }
 
 /**
@@ -163,52 +209,57 @@ export async function getUserDocumentById(
     return null;
   }
 
-  const doc = await db.document.findFirst({
-    where: {
-      id: trimmedDocId,
-      userId: trimmedUserId,
-    },
-    include: {
-      documentType: true,
-      fields: {
-        orderBy: { createdAt: "asc" },
+  try {
+    const doc = await db.document.findFirst({
+      where: {
+        id: trimmedDocId,
+        userId: trimmedUserId,
       },
-    },
-  });
+      include: {
+        documentType: true,
+        fields: {
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
 
-  if (!doc) {
-    return null;
+    if (doc) {
+      return {
+        id: doc.id,
+        userId: doc.userId,
+        documentTypeId: doc.documentTypeId,
+        documentTypeKey: doc.documentType.canonicalKey,
+        documentTypeName: doc.documentType.displayName,
+        category: doc.documentType.category,
+        displayName: doc.displayName,
+        source: doc.source,
+        issuer: doc.issuer,
+        issueDate: doc.issueDate ? doc.issueDate.toISOString() : null,
+        expiryDate: doc.expiryDate ? doc.expiryDate.toISOString() : null,
+        imageStorageKey: doc.imageStorageKey,
+        mimeType: doc.mimeType,
+        fileSize: doc.fileSize,
+        extractionStatus: doc.extractionStatus,
+        extractionConfidence: doc.extractionConfidence,
+        createdAt: doc.createdAt.toISOString(),
+        updatedAt: doc.updatedAt.toISOString(),
+        fields: doc.fields.map((f) => ({
+          id: f.id,
+          fieldName: f.fieldName,
+          fieldType: f.fieldType,
+          semanticRole: f.semanticRole,
+          normalizedValue: f.normalizedValue,
+          isUserCorrected: f.isUserCorrected,
+          rawExtractedValue: f.rawExtractedValue,
+        })),
+      };
+    }
+  } catch (err) {
+    console.warn("[Vault] getUserDocumentById database query failed. Searching demo baseline:", err instanceof Error ? err.message : String(err));
   }
 
-  return {
-    id: doc.id,
-    userId: doc.userId,
-    documentTypeId: doc.documentTypeId,
-    documentTypeKey: doc.documentType.canonicalKey,
-    documentTypeName: doc.documentType.displayName,
-    category: doc.documentType.category,
-    displayName: doc.displayName,
-    source: doc.source,
-    issuer: doc.issuer,
-    issueDate: doc.issueDate ? doc.issueDate.toISOString() : null,
-    expiryDate: doc.expiryDate ? doc.expiryDate.toISOString() : null,
-    imageStorageKey: doc.imageStorageKey,
-    mimeType: doc.mimeType,
-    fileSize: doc.fileSize,
-    extractionStatus: doc.extractionStatus,
-    extractionConfidence: doc.extractionConfidence,
-    createdAt: doc.createdAt.toISOString(),
-    updatedAt: doc.updatedAt.toISOString(),
-    fields: doc.fields.map((f) => ({
-      id: f.id,
-      fieldName: f.fieldName,
-      fieldType: f.fieldType,
-      semanticRole: f.semanticRole,
-      normalizedValue: f.normalizedValue,
-      isUserCorrected: f.isUserCorrected,
-      rawExtractedValue: f.rawExtractedValue,
-    })),
-  };
+  const allFallback = getBaselineVaultDocuments(trimmedUserId);
+  return allFallback.find((d) => d.id === trimmedDocId) || null;
 }
 
 /**
@@ -223,12 +274,17 @@ export async function getUserVaultSummary(
     throw new UserNotFoundError(userId || "EMPTY_USER_ID");
   }
 
-  const user = await db.user.findUnique({
-    where: { id: trimmedUserId },
-  });
+  let userDisplayName = "Demo Citizen (KCET Applicant)";
 
-  if (!user) {
-    throw new UserNotFoundError(trimmedUserId);
+  try {
+    const user = await db.user.findUnique({
+      where: { id: trimmedUserId },
+    });
+    if (user) {
+      userDisplayName = user.displayName;
+    }
+  } catch (err) {
+    console.warn("[Vault] getUserVaultSummary user query failed. Using demo baseline user:", err instanceof Error ? err.message : String(err));
   }
 
   const allDocs = await getUserDocuments(trimmedUserId, undefined, db);
@@ -251,8 +307,8 @@ export async function getUserVaultSummary(
     .sort((a, b) => b.count - a.count || a.displayName.localeCompare(b.displayName));
 
   return {
-    userId: user.id,
-    userDisplayName: user.displayName,
+    userId: trimmedUserId,
+    userDisplayName,
     totalDocuments: allDocs.length,
     issuedCount,
     uploadedCount,
