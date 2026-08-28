@@ -54,12 +54,12 @@ export const GOVERNMENT_AUTHORITIES: Record<string, GovernmentAuthority> = {
     portalName: "Nadakacheri / Seva Sindhu Citizen Portal",
     officialUrl: "https://nadakacheri.karnataka.gov.in",
     officialProcessNote:
-      "Income Certificates and Caste Certificates are issued under the authority of the Tahsildar. If family income or personal details have changed, a fresh certificate application or correction request must be submitted via Nadakacheri / Seva Sindhu or the local Taluk Office.",
+      "Income Certificates, Caste Certificates, Domicile Certificates, and EWS Certificates are issued under the statutory authority of the Tahsildar. If family income, residence, or personal details have changed, a fresh certificate application or correction request must be submitted via Nadakacheri / Seva Sindhu or the local Taluk Office.",
     appointmentInfoNote:
       "Visit your local Atalji Janasnehi Kendra (Nadakacheri) or access the state citizen services portal.",
     disclaimer:
       "DigiReady cannot alter income assessment values or caste categories certified by the Revenue Department.",
-    supportedDocumentTypes: ["INCOME_CERTIFICATE", "CASTE_CERTIFICATE"],
+    supportedDocumentTypes: ["INCOME_CERTIFICATE", "CASTE_CERTIFICATE", "DOMICILE_CERTIFICATE", "RURAL_STUDY_CERTIFICATE"],
   },
   PASSPORT_SEVA: {
     id: "PASSPORT_SEVA",
@@ -76,6 +76,51 @@ export const GOVERNMENT_AUTHORITIES: Record<string, GovernmentAuthority> = {
       "DigiReady does not schedule passport appointments or submit passport re-issue requests.",
     supportedDocumentTypes: ["PASSPORT"],
   },
+  INCOME_TAX_DEPARTMENT: {
+    id: "INCOME_TAX_DEPARTMENT",
+    name: "Income Tax Department (NSDL / UTIITSL)",
+    shortName: "Income Tax Dept (PAN)",
+    jurisdiction: "National / Ministry of Finance",
+    portalName: "Protean (NSDL) / UTIITSL PAN Service Portal",
+    officialUrl: "https://www.onlineservices.nsdl.com/paam/endUserRegisterContact.html",
+    officialProcessNote:
+      "To correct Name, Date of Birth, or Father's Name in PAN records, submit a 'Changes or Correction in existing PAN data' application online via Protean (NSDL) or UTIITSL, backed by Aadhaar e-KYC or identity proof.",
+    appointmentInfoNote:
+      "Submit paperless e-KYC online or courier physical signed acknowledgement to the Protean / UTIITSL processing centre.",
+    disclaimer:
+      "DigiReady is an independent preparation system and cannot alter Income Tax Department PAN master records.",
+    supportedDocumentTypes: ["GOVERNMENT_IDENTITY_PROOF"],
+  },
+  ELECTION_COMMISSION: {
+    id: "ELECTION_COMMISSION",
+    name: "Election Commission of India (ECI)",
+    shortName: "Election Commission (Voter ID)",
+    jurisdiction: "National / Election Commission of India",
+    portalName: "ECI Voters' Service Portal",
+    officialUrl: "https://voters.eci.gov.in",
+    officialProcessNote:
+      "To rectify Name, Date of Birth, or Address on a Voter ID (EPIC), submit Form 8 (Correction of entries in electoral roll) online through the ECI portal or via the Electoral Registration Officer (ERO) / Booth Level Officer (BLO).",
+    appointmentInfoNote:
+      "Submit Form 8 online with Aadhaar or 10th marks card as proof of identity/DOB.",
+    disclaimer:
+      "DigiReady cannot modify official electoral roll entries.",
+    supportedDocumentTypes: ["GOVERNMENT_IDENTITY_PROOF"],
+  },
+  TRANSPORT_DEPARTMENT: {
+    id: "TRANSPORT_DEPARTMENT",
+    name: "Ministry of Road Transport & Highways (Parivahan Sarathi)",
+    shortName: "RTO / Parivahan Sarathi",
+    jurisdiction: "State Transport Departments / MoRTH",
+    portalName: "Parivahan Sarathi Portal",
+    officialUrl: "https://parivahan.gov.in",
+    officialProcessNote:
+      "To update Name or Date of Birth on a Driving Licence, submit an 'Application for Services on Driving Licence' (Change of Details) via the Parivahan Sarathi portal followed by document verification at the jurisdictional RTO.",
+    appointmentInfoNote:
+      "Book an RTO slot online via Sarathi if physical biometric verification is mandated by your state transport department.",
+    disclaimer:
+      "DigiReady does not issue or modify driving licence records.",
+    supportedDocumentTypes: ["GOVERNMENT_IDENTITY_PROOF"],
+  },
   EPFO: {
     id: "EPFO",
     name: "Employees' Provident Fund Organisation (EPFO)",
@@ -91,6 +136,21 @@ export const GOVERNMENT_AUTHORITIES: Record<string, GovernmentAuthority> = {
       "DigiReady cannot update EPF member profiles or employer approval workflows.",
     supportedDocumentTypes: ["GOVERNMENT_IDENTITY_PROOF"],
   },
+  CIVIL_REGISTRATION: {
+    id: "CIVIL_REGISTRATION",
+    name: "Registrar of Births and Deaths / Municipal Corporation",
+    shortName: "Civil Registration System (Birth / Death)",
+    jurisdiction: "State Government / Municipal Administration",
+    portalName: "Civil Registration System (CRS) / State Municipal Portal",
+    officialUrl: "https://crsorgi.gov.in",
+    officialProcessNote:
+      "Name corrections on Birth Certificates must be requested at the office of the Registrar of Births and Deaths where the birth was registered, accompanied by hospital records or affidavit.",
+    appointmentInfoNote:
+      "Visit the local Municipal Ward office or Gram Panchayat office.",
+    disclaimer:
+      "DigiReady cannot alter statutory birth register entries.",
+    supportedDocumentTypes: ["SECONDARY_MARKS_CARD", "GOVERNMENT_IDENTITY_PROOF"],
+  },
 };
 
 export function getAuthorityForDocumentType(documentTypeKey: string): GovernmentAuthority {
@@ -100,7 +160,12 @@ export function getAuthorityForDocumentType(documentTypeKey: string): Government
   if (documentTypeKey === "SECONDARY_MARKS_CARD" || documentTypeKey === "HIGHER_SECONDARY_MARKS_CARD") {
     return GOVERNMENT_AUTHORITIES.STATE_EDUCATION_BOARD;
   }
-  if (documentTypeKey === "INCOME_CERTIFICATE" || documentTypeKey === "CASTE_CERTIFICATE") {
+  if (
+    documentTypeKey === "INCOME_CERTIFICATE" ||
+    documentTypeKey === "CASTE_CERTIFICATE" ||
+    documentTypeKey === "DOMICILE_CERTIFICATE" ||
+    documentTypeKey === "RURAL_STUDY_CERTIFICATE"
+  ) {
     return GOVERNMENT_AUTHORITIES.REVENUE_DEPARTMENT;
   }
   if (documentTypeKey === "PASSPORT") {

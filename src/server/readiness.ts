@@ -76,9 +76,14 @@ export async function evaluateServiceReadiness(
     throw new UserNotFoundError(trimmedUserId);
   }
 
-  // 2. Retrieve Service and its ordered requirements
-  const service = await db.service.findUnique({
-    where: { serviceKey: trimmedServiceKey },
+  // 2. Retrieve Service and its ordered requirements (by serviceKey or slug)
+  const service = await db.service.findFirst({
+    where: {
+      OR: [
+        { serviceKey: trimmedServiceKey },
+        { slug: trimmedServiceKey.toLowerCase() },
+      ],
+    },
     include: {
       requirements: {
         orderBy: { sortOrder: "asc" },

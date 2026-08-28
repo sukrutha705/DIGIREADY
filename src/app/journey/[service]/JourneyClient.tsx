@@ -12,14 +12,17 @@ import {
   IconHelp,
   IconChevronRight,
   IconClose,
-  IconLock,
   IconFileText,
 } from "@/components/ui/Icons";
 import { ConflictCard } from "@/components/consistency/ConflictCard";
 import { UploadModal } from "@/components/documents/UploadModal";
+import { EligibilityCard } from "@/components/eligibility/EligibilityCard";
+import { ApplicationWindowCard } from "@/components/application-window/ApplicationWindowCard";
+import { ReadinessBlockersCard } from "@/components/journey/ReadinessBlockersCard";
 import { useRouter } from "next/navigation";
 import type { ApplicationJourney, JourneyDocument } from "@/server/journey/types";
 import type { DocumentGuidance } from "@/server/guidance/types";
+import { getCanonicalDocumentSlug } from "@/server/guidance/slugs";
 
 interface JourneyPageClientActionsProps {
   journey: ApplicationJourney;
@@ -32,6 +35,18 @@ export function JourneyPageClientActions({ journey }: JourneyPageClientActionsPr
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [uploadPreselectType, setUploadPreselectType] = useState<string>("");
   const [uploadPreselectName, setUploadPreselectName] = useState<string>("");
+
+  // Profile modal state for providing missing eligibility attributes
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    dateOfBirth: "",
+    gender: "Female",
+    domicileState: "Karnataka",
+    category: "General",
+    educationQualification: "12TH_PASS",
+    annualFamilyIncome: "",
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const handleOpenUpload = (docType?: string, docName?: string) => {
     setUploadPreselectType(docType || "");
@@ -70,57 +85,62 @@ export function JourneyPageClientActions({ journey }: JourneyPageClientActionsPr
     }
   };
 
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setSavingProfile(true);
+      const res = await fetch("/api/user/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profileForm),
+      });
+      if (res.ok) {
+        setIsProfileModalOpen(false);
+        router.refresh();
+      }
+    } catch {
+      // safe error
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
   return (
-    <>
-      {/* Ready to Apply Notification Card (When all checks pass and no conflicts exist) */}
-      {journey.status === "READY_TO_APPLY" && (
-        <Card className="p-6 border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/30">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-3.5">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-md shadow-emerald-600/20">
-                <IconCheckCircle className="h-6 w-6" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-emerald-950 dark:text-emerald-100">
-                    Ready to Apply for {journey.serviceName}
-                  </h2>
-                  <Badge variant="success" size="sm">Preparation Complete</Badge>
-                </div>
-                <p className="text-xs text-emerald-800 dark:text-emerald-300 mt-1 leading-relaxed">
-                  All {journey.requiredCount} required documents are available in your vault, metadata checks have passed, and no identity conflicts were detected.
-                </p>
-                <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1 italic">
-                  Note: DigiReady is a preparation tool and does not submit the application. Proceed to the official portal to complete your filing.
-                </p>
-              </div>
-            </div>
-
-            <Button
-              variant="primary"
-              size="md"
-              onClick={() => alert("DigiReady does not submit live applications. You are ready to apply on the official examination portal.")}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm shrink-0 self-start sm:self-auto text-xs"
-            >
-              Application Guidelines →
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Upload Modal */}
-      <UploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => {
-          setIsUploadModalOpen(false);
-          router.refresh();
+    <div className="space-y-6">
+      {/* 1. Primary Readiness Blockers / Ready To Apply Card */}
+      <ReadinessBlockersCard
+        blockers={journey.blockers || []}
+        isReady={journey.status === "READY_TO_APPLY"}
+        serviceName={journey.serviceName}
+        officialApplicationUrl={journey.officialApplicationUrl}
+        officialWebsite={journey.officialWebsite}
+        onActionClick={(blocker) => {
+          if (blocker.category === "DOCUMENT_MISSING" && blocker.documentType) {
+            handleOpenUpload(blocker.documentType);
+          } else if (blocker.category === "ELIGIBILITY") {
+            setIsProfileModalOpen(true);
+          }
         }}
-        preselectedDocumentType={uploadPreselectType}
-        preselectedDocumentName={uploadPreselectName}
-        onSuccess={() => router.refresh()}
       />
 
-      {/* Required Documents Checklist Card */}
+      {/* 2. Statutory Eligibility Card */}
+      {journey.eligibility && (
+        <div id="eligibility">
+          <EligibilityCard
+            eligibility={journey.eligibility}
+            onUpdateProfile={() => setIsProfileModalOpen(true)}
+          />
+        </div>
+      )}
+
+      {/* 3. Application Window Card */}
+      {journey.applicationWindow && (
+        <div id="window">
+          <ApplicationWindowCard windowInfo={journey.applicationWindow} />
+        </div>
+      )}
+
+      {/* 4. Required Documents Checklist Card */}
       <Card className="p-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
           <div>
@@ -190,15 +210,16 @@ export function JourneyPageClientActions({ journey }: JourneyPageClientActionsPr
                         <IconFileText className="w-3.5 h-3.5" />
                         <span>Upload Document</span>
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleOpenGuidance(req.documentType)}
-                        className="gap-1.5 text-xs text-amber-700 border-amber-200 hover:bg-amber-50 dark:border-amber-900/60 dark:text-amber-300 dark:hover:bg-amber-950/40"
-                      >
-                        <IconHelp className="w-3.5 h-3.5" />
-                        <span>Get Guidance</span>
-                      </Button>
+                      <Link href={`/guidance/${getCanonicalDocumentSlug(req.documentType)}`}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 text-xs text-amber-700 border-amber-200 hover:bg-amber-50 dark:border-amber-900/60 dark:text-amber-300 dark:hover:bg-amber-950/40"
+                        >
+                          <IconHelp className="w-3.5 h-3.5" />
+                          <span>Get Guidance</span>
+                        </Button>
+                      </Link>
                     </>
                   ) : docObj?.status === "NEEDS_REVIEW" && req.documentId ? (
                     <Link href={`/documents/${req.documentId}`}>
@@ -226,16 +247,29 @@ export function JourneyPageClientActions({ journey }: JourneyPageClientActionsPr
         </div>
       </Card>
 
-      {/* Cross-Document Consistency Assessment Component */}
+      {/* 5. Cross-Document Consistency & Official Correction Guidance */}
       {journey.consistency && (
-        <ConflictCard consistency={journey.consistency} />
+        <div id="conflicts">
+          <ConflictCard consistency={journey.consistency} />
+        </div>
       )}
 
-      {/* Structured Guidance Modal */}
+      {/* Upload Modal */}
+      <UploadModal
+        isOpen={isUploadModalOpen}
+        onClose={() => {
+          setIsUploadModalOpen(false);
+          router.refresh();
+        }}
+        preselectedDocumentType={uploadPreselectType}
+        preselectedDocumentName={uploadPreselectName}
+        onSuccess={() => router.refresh()}
+      />
+
+      {/* Missing Document Guidance Modal */}
       {activeGuidance && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
           <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 max-h-[90vh] overflow-y-auto flex flex-col gap-4">
-            {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400">
@@ -252,64 +286,191 @@ export function JourneyPageClientActions({ journey }: JourneyPageClientActionsPr
               </div>
               <button
                 onClick={() => setActiveGuidance(null)}
-                aria-label="Close guidance dialog"
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
               >
                 <IconClose className="h-5 w-5" />
               </button>
             </div>
 
-            {/* WHAT IT IS */}
-            <div className="space-y-1 text-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                What It Is
-              </span>
-              <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
-                {activeGuidance.description}
-              </p>
-            </div>
-
-            {/* WHY YOU MAY NEED IT */}
-            <div className="space-y-1 text-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                Why You May Need It
-              </span>
-              <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
-                Required for {journey.serviceName} application processing and eligibility verification.
-              </p>
-            </div>
-
-            {/* RECOMMENDED NEXT STEPS */}
-            <div className="space-y-1.5 text-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                Recommended Next Steps
-              </span>
-              <div className="flex flex-col gap-1.5 rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/40">
-                {activeGuidance.nextSteps.map((step, idx) => (
-                  <div key={idx} className="flex items-start gap-2 text-slate-800 dark:text-slate-200">
-                    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300 mt-0.5">
-                      {idx + 1}
-                    </span>
-                    <span className="leading-snug">{step}</span>
-                  </div>
-                ))}
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+                <span className="font-bold text-slate-900 dark:text-white text-xs">
+                  What is this document?
+                </span>
+                <p className="mt-1 text-slate-600 dark:text-slate-300 leading-relaxed text-[11px]">
+                  {activeGuidance.description}
+                </p>
               </div>
+
+              {activeGuidance.authorityNote && (
+                <div className="flex flex-col gap-1">
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    Issuing Authority:
+                  </span>
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {activeGuidance.authorityNote}
+                  </span>
+                </div>
+              )}
+
+              {activeGuidance.nextSteps && activeGuidance.nextSteps.length > 0 && (
+                <div className="flex flex-col gap-2 pt-1">
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    How to obtain this document:
+                  </span>
+                  <ol className="list-decimal pl-4 space-y-1.5 text-slate-600 dark:text-slate-300">
+                    {activeGuidance.nextSteps.map((step: string, idx: number) => (
+                      <li key={idx} className="pl-1">
+                        {step}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
             </div>
 
-            {/* OFFICIAL PROCESS NOTE */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-800/40 leading-relaxed">
-              ℹ️ <span className="font-semibold text-slate-700 dark:text-slate-300">Official Process Note:</span> {activeGuidance.authorityNote || "Issued by competent state/local authority. DigiReady provides structured guidance to assist your preparation."}
-            </div>
-
-            {/* Actions */}
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              <Button variant="outline" size="sm" onClick={() => setActiveGuidance(null)}>
-                Back to Application Journey
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setActiveGuidance(null)}
+              >
+                Close
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  const type = activeGuidance.documentType;
+                  const name = activeGuidance.displayName;
+                  setActiveGuidance(null);
+                  handleOpenUpload(type, name);
+                }}
+                className="gap-1.5"
+              >
+                <IconFileText className="w-3.5 h-3.5" />
+                <span>Upload Document</span>
               </Button>
             </div>
           </div>
         </div>
       )}
-    </>
+
+      {/* Profile Information Modal */}
+      {isProfileModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 max-h-[90vh] overflow-y-auto space-y-4">
+            <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                  Provide Eligibility Information
+                </h3>
+                <p className="text-xs text-zinc-500">
+                  Enter information needed to evaluate statutory eligibility
+                </p>
+              </div>
+              <button
+                onClick={() => setIsProfileModalOpen(false)}
+                className="text-zinc-400 hover:text-zinc-600"
+              >
+                <IconClose className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProfile} className="space-y-3 text-xs">
+              <div>
+                <label className="font-medium text-zinc-700 dark:text-zinc-300 block mb-1">
+                  Date of Birth
+                </label>
+                <input
+                  type="date"
+                  value={profileForm.dateOfBirth}
+                  onChange={(e) => setProfileForm({ ...profileForm, dateOfBirth: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="font-medium text-zinc-700 dark:text-zinc-300 block mb-1">
+                  Education Qualification
+                </label>
+                <select
+                  value={profileForm.educationQualification}
+                  onChange={(e) => setProfileForm({ ...profileForm, educationQualification: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 text-xs"
+                >
+                  <option value="10TH_PASS">10th Standard / SSLC</option>
+                  <option value="12TH_PASS">12th Standard / PUC / 10+2</option>
+                  <option value="GRADUATE">Bachelor&apos;s Degree / Graduate</option>
+                  <option value="POST_GRADUATE">Master&apos;s Degree / Post-Graduate</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="font-medium text-zinc-700 dark:text-zinc-300 block mb-1">
+                  State of Domicile
+                </label>
+                <input
+                  type="text"
+                  value={profileForm.domicileState}
+                  onChange={(e) => setProfileForm({ ...profileForm, domicileState: e.target.value })}
+                  placeholder="e.g. Karnataka"
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="font-medium text-zinc-700 dark:text-zinc-300 block mb-1">
+                  Social Category
+                </label>
+                <select
+                  value={profileForm.category}
+                  onChange={(e) => setProfileForm({ ...profileForm, category: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 text-xs"
+                >
+                  <option value="General">General / Unreserved</option>
+                  <option value="OBC">OBC (Other Backward Classes)</option>
+                  <option value="SC">SC (Scheduled Castes)</option>
+                  <option value="ST">ST (Scheduled Tribes)</option>
+                  <option value="EWS">EWS (Economically Weaker Section)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="font-medium text-zinc-700 dark:text-zinc-300 block mb-1">
+                  Annual Family Income (₹)
+                </label>
+                <input
+                  type="number"
+                  value={profileForm.annualFamilyIncome}
+                  onChange={(e) => setProfileForm({ ...profileForm, annualFamilyIncome: e.target.value })}
+                  placeholder="e.g. 150000"
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 text-xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsProfileModalOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  disabled={savingProfile}
+                >
+                  {savingProfile ? "Saving..." : "Save Information"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

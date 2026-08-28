@@ -249,9 +249,15 @@ export function DocumentDetailClient({
                     />
                   ) : (
                     <div className="flex flex-col">
-                      <span className="font-mono text-slate-900 dark:text-slate-100 font-bold">
-                        {field.normalizedValue}
-                      </span>
+                      {field.normalizedValue || field.rawExtractedValue ? (
+                        <span className="font-mono text-slate-900 dark:text-slate-100 font-bold">
+                          {field.normalizedValue || field.rawExtractedValue}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 dark:text-slate-500 italic text-[11px]">
+                          Could not be reliably extracted
+                        </span>
+                      )}
                       {isUserCorrected && (
                         <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">
                           Active metadata for DigiReady checks

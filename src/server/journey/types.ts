@@ -9,9 +9,12 @@ import type { ConsistencyAssessment, FieldConsistencyComparison } from "@/server
 export const JourneyStatuses = {
   NOT_STARTED: "NOT_STARTED",
   IN_PROGRESS: "IN_PROGRESS",
+  NEEDS_INFORMATION: "NEEDS_INFORMATION",
   MISSING_DOCUMENTS: "MISSING_DOCUMENTS",
   READY_FOR_VERIFICATION: "READY_FOR_VERIFICATION",
   NEEDS_ATTENTION: "NEEDS_ATTENTION",
+  NOT_ELIGIBLE: "NOT_ELIGIBLE",
+  APPLICATION_WINDOW_CLOSED: "APPLICATION_WINDOW_CLOSED",
   READY_TO_APPLY: "READY_TO_APPLY",
   // Backward compatibility alias
   READY_TO_SHARE: "READY_TO_SHARE",
@@ -46,6 +49,7 @@ export const JourneyActionTypes = {
   GUIDANCE: "GUIDANCE",
   VERIFY: "VERIFY",
   CONFLICT: "CONFLICT",
+  PROVIDE_INFO: "PROVIDE_INFO",
   SHARE: "SHARE",
   REFRESH: "REFRESH",
 } as const;
@@ -60,14 +64,29 @@ export interface JourneyAction {
   documentId?: string;
 }
 
+export interface ReadinessBlocker {
+  id: string;
+  category: "ELIGIBILITY" | "DOCUMENT_MISSING" | "CONFLICT" | "VERIFICATION" | "DEADLINE";
+  title: string;
+  description: string;
+  actionLabel: string;
+  actionType: "GUIDANCE" | "CONFLICT_GUIDANCE" | "PROVIDE_INFORMATION" | "INSPECT_DOCUMENT" | "CHECK_PORTAL";
+  actionHref?: string;
+  documentType?: string;
+  documentId?: string;
+}
+
 export interface ApplicationJourney {
   serviceId: string;
   serviceName: string;
+  slug?: string;
   status: ApplicationJourneyStatus;
   startedAt: string;
   requiredCount: number;
   availableCount: number;
   missingCount: number;
+  officialWebsite?: string | null;
+  officialApplicationUrl?: string | null;
   readiness: ServiceReadiness;
   missingDocuments: JourneyDocument[];
   verifiedDocuments: JourneyDocument[];
@@ -75,5 +94,9 @@ export interface ApplicationJourney {
   consistency: ConsistencyAssessment;
   conflicts: FieldConsistencyComparison[];
   nextActions: JourneyAction[];
+  blockers: ReadinessBlocker[];
+  eligibility?: import("@/server/eligibility/types").ServiceEligibilityResult | null;
+  applicationWindow?: import("@/server/application-window/types").ApplicationWindowInfo | null;
   limitationNote: string;
 }
+

@@ -46,6 +46,11 @@ export default async function DemoPresentationPage() {
           <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
             <DemoResetButton />
             <DemoUploadAction />
+            <Link href="/services">
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs font-semibold">
+                <span>Explore All Services</span>
+              </Button>
+            </Link>
             <Link href="/journey/kcet">
               <Button variant="primary" size="sm" className="gap-1.5 text-xs font-semibold">
                 <span>Open Journey</span>

@@ -88,16 +88,19 @@ export async function verifyDocument(
   });
 
   // Check 2: Canonical Type Recognized
+  const isTypeRecognized = document.documentTypeKey !== "UNKNOWN" && Boolean(ruleSet);
   checks.push({
     key: "DOCUMENT_TYPE_RECOGNIZED",
     label: "Document type recognized",
-    status: "PASS",
-    explanation: `Recognized canonical document type: ${ruleSet.displayName}.`,
+    status: isTypeRecognized ? "PASS" : "FAIL",
+    explanation: isTypeRecognized
+      ? `Recognized canonical document type: ${ruleSet.displayName}.`
+      : "Document type could not be confidently identified.",
   });
 
   // Check 3: Issuer Present
   if (ruleSet.requireIssuer) {
-    const hasIssuer = Boolean(document.issuer && document.issuer.trim() !== "");
+    const hasIssuer = Boolean(document.issuer && document.issuer.trim() !== "" && document.issuer !== "Unknown Authority");
     checks.push({
       key: "ISSUER_PRESENT",
       label: "Issuing authority recorded",
@@ -144,9 +147,18 @@ export async function verifyDocument(
     });
   }
 
-  // Check 6: Semantic Field Roles
+  // Check 6: Semantic Field Roles (Must have non-empty extracted or corrected values)
   if (ruleSet.requiredSemanticRoles.length > 0) {
-    const availableRoles = new Set(document.fields.map((f) => f.semanticRole).filter(Boolean));
+    const availableRoles = new Set(
+      document.fields
+        .filter(
+          (f) =>
+            (f.normalizedValue && f.normalizedValue.trim().length > 0) ||
+            (f.rawExtractedValue && f.rawExtractedValue.trim().length > 0)
+        )
+        .map((f) => f.semanticRole)
+        .filter(Boolean)
+    );
     const missingRoles = ruleSet.requiredSemanticRoles.filter((role) => !availableRoles.has(role));
 
     const fieldsPass = missingRoles.length === 0;
@@ -160,7 +172,7 @@ export async function verifyDocument(
     });
   }
 
-  const allPassed = checks.every((c) => c.status === "PASS");
+  const allPassed = checks.every((c) => c.status === "PASS") && document.extractionStatus !== "NEEDS_REVIEW";
   const status: VerificationStatus = allPassed ? "READY_FOR_REVIEW" : "NEEDS_REVIEW";
 
   let summary = "";

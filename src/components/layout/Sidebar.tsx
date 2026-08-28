@@ -12,13 +12,14 @@ import {
   IconSettings,
   IconHelp,
   IconLock,
-  IconFileText,
   IconSparkles,
+  IconShield,
 } from "@/components/ui/Icons";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: IconDashboard },
-  { href: "/journey/kcet", label: "Application Journey", icon: IconFileText },
+  { href: "/services", label: "Explore Services", icon: IconShield },
+  { href: "/guidance", label: "Guidance Center", icon: IconHelp },
   { href: "/documents", label: "My Documents", icon: IconFolder },
   { href: "/issued", label: "Issued", icon: IconIssued },
   { href: "/uploaded", label: "Uploaded", icon: IconUpload },

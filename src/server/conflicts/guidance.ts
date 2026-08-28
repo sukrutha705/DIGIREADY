@@ -1,6 +1,6 @@
 /**
  * DigiReady - Deterministic Conflict Guidance Subsystem
- * Implements deterministic routing to official authorities and structured correction guidance.
+ * Phase 9.3: Implements deterministic routing to official authorities, structured resolution plans, and centre requirements.
  */
 
 import { GOVERNMENT_AUTHORITIES, type GovernmentAuthority } from "@/server/authorities";
@@ -10,18 +10,116 @@ import type {
   ConflictGuidance,
   AffectedDocumentEntry,
   AuthorityCorrectionBranch,
+  ConflictResolutionPlan,
 } from "./types";
 import type { FieldConsistencyComparison } from "@/server/consistency/types";
+
+/**
+ * Resolves the statutory authority responsible for correcting the given conflict.
+ */
+export function resolveCorrectionAuthority(
+  conflict: FieldConsistencyComparison | { fieldKey: string; entries?: any[] }
+): GovernmentAuthority {
+  const fieldKey = conflict.fieldKey;
+  const entries = conflict.entries || [];
+
+  const hasAadhaar = entries.some((e: any) =>
+    e.documentTypeKey === "GOVERNMENT_IDENTITY_PROOF" || (e.documentDisplayName || "").toLowerCase().includes("aadhaar")
+  );
+  const hasPassport = entries.some((e: any) =>
+    e.documentTypeKey === "PASSPORT" || (e.documentDisplayName || "").toLowerCase().includes("passport")
+  );
+  const hasPAN = entries.some((e: any) =>
+    (e.documentDisplayName || "").toLowerCase().includes("pan")
+  );
+  const hasDrivingLicence = entries.some((e: any) =>
+    (e.documentDisplayName || "").toLowerCase().includes("driving") || (e.documentDisplayName || "").toLowerCase().includes("licence")
+  );
+  const hasRevenue = entries.some((e: any) =>
+    ["INCOME_CERTIFICATE", "CASTE_CERTIFICATE", "DOMICILE_CERTIFICATE", "RURAL_STUDY_CERTIFICATE"].includes(e.documentTypeKey) ||
+    (e.documentDisplayName || "").toLowerCase().includes("income") ||
+    (e.documentDisplayName || "").toLowerCase().includes("caste")
+  );
+  const hasEducation = entries.some((e: any) =>
+    ["SECONDARY_MARKS_CARD", "HIGHER_SECONDARY_MARKS_CARD", "STUDY_CERTIFICATE"].includes(e.documentTypeKey) ||
+    (e.documentDisplayName || "").toLowerCase().includes("marks") ||
+    (e.documentDisplayName || "").toLowerCase().includes("sslc") ||
+    (e.documentDisplayName || "").toLowerCase().includes("puc")
+  );
+
+  if (hasPassport) return GOVERNMENT_AUTHORITIES.PASSPORT_SEVA;
+  if (hasPAN) return GOVERNMENT_AUTHORITIES.INCOME_TAX_DEPARTMENT;
+  if (hasDrivingLicence) return GOVERNMENT_AUTHORITIES.TRANSPORT_DEPARTMENT;
+  if (hasRevenue) return GOVERNMENT_AUTHORITIES.REVENUE_DEPARTMENT;
+  if (hasAadhaar) return GOVERNMENT_AUTHORITIES.UIDAI;
+  if (hasEducation) return GOVERNMENT_AUTHORITIES.STATE_EDUCATION_BOARD;
+
+  if (fieldKey === "name" || fieldKey === "dateOfBirth" || fieldKey === "gender" || fieldKey === "address") {
+    return GOVERNMENT_AUTHORITIES.UIDAI;
+  }
+  if (fieldKey === "parentName") {
+    return GOVERNMENT_AUTHORITIES.REVENUE_DEPARTMENT;
+  }
+
+  return GOVERNMENT_AUTHORITIES.UIDAI;
+}
+
+/**
+ * Determines whether the conflict resolution normally requires a physical centre visit.
+ */
+export function requiresPhysicalCentre(
+  conflict: FieldConsistencyComparison | { fieldKey: string; entries?: any[] }
+): boolean {
+  const fieldKey = conflict.fieldKey;
+  // Biometrics, photo, and official attested identity/DOB updates at UIDAI/PSK/RTO/Tahsildar typically require an in-person visit
+  if (fieldKey === "dateOfBirth" || fieldKey === "name" || fieldKey === "gender") {
+    return true;
+  }
+  const authority = resolveCorrectionAuthority(conflict);
+  if (authority.id === "PASSPORT_SEVA" || authority.id === "TRANSPORT_DEPARTMENT") {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Builds a structured, actionable ConflictResolutionPlan.
+ */
+export function buildConflictResolutionPlan(
+  comparison: FieldConsistencyComparison,
+  rawDocumentsMap: Record<string, { issuer: string; rawExtractedValue?: string }> = {}
+): ConflictResolutionPlan {
+  const authority = resolveCorrectionAuthority(comparison);
+  const centreRequired = requiresPhysicalCentre(comparison);
+  const fieldLabel = comparison.fieldLabel || comparison.fieldKey;
+
+  const guidance = generateConflictGuidance(comparison, rawDocumentsMap);
+
+  return {
+    authority,
+    authorityType: authority.jurisdiction,
+    reason: `Discrepancy in ${fieldLabel} between submitted identity and qualification records.`,
+    officialPortal: authority.portalName,
+    officialInstructionsUrl: authority.officialUrl,
+    centreRequired,
+    correctionMethod: centreRequired
+      ? "In-person visit to an authorized official centre or online demographic update with official document proof."
+      : "Online application through the official statutory portal or citizen service centre.",
+    requiredSupportingDocuments: guidance.requiredDocuments,
+    numberedSteps: guidance.numberedSteps,
+    nextVerificationAction: "Obtain the corrected official record and re-upload the new document to DigiReady.",
+  };
+}
 
 export function generateConflictGuidance(
   comparison: FieldConsistencyComparison,
   rawDocumentsMap: Record<string, { issuer: string; rawExtractedValue?: string }> = {}
 ): ConflictGuidance {
   const fieldKey = comparison.fieldKey;
-  const fieldLabel = comparison.fieldLabel;
+  const fieldLabel = comparison.fieldLabel || comparison.fieldKey;
 
   // Build affected documents list
-  const affectedDocuments: AffectedDocumentEntry[] = comparison.entries.map((entry) => {
+  const affectedDocuments: AffectedDocumentEntry[] = (comparison.entries || []).map((entry) => {
     const rawMeta = rawDocumentsMap[entry.documentId];
     return {
       documentId: entry.documentId,
@@ -44,9 +142,6 @@ export function generateConflictGuidance(
 
   // 1. NAME MISMATCH
   if (fieldKey === "name") {
-    let resolutionPath: ConflictResolutionPath = "AADHAAR_UPDATE";
-    let recommendedAuthority: GovernmentAuthority = GOVERNMENT_AUTHORITIES.UIDAI;
-
     const branches: AuthorityCorrectionBranch[] = [];
 
     if (hasAadhaar) {
@@ -98,8 +193,113 @@ export function generateConflictGuidance(
         summary: "Apply for a fresh/corrected Revenue Certificate via Nadakacheri / Seva Sindhu portal.",
         steps: [
           "Login to Nadakacheri / Seva Sindhu citizen portal or visit the nearest Taluk office / citizen service centre.",
-          "Apply for a fresh certificate with the matching applicant name and updated ration card/Aadhaar details.",
-          "Download the verified digital certificate with RD number and upload it to DigiReady.",
+          "Submit an application for a corrected certificate referencing your application number.",
+          "Submit required identity and family declaration proofs.",
+          "Receive the updated digital certificate and upload it to DigiReady.",
+        ],
+      });
+    }
+
+    // Default branches if single document or unmatched
+    if (branches.length === 0) {
+      branches.push({
+        documentTypeKey: "GOVERNMENT_IDENTITY_PROOF",
+        documentDisplayName: "Official Identity Record",
+        authorityName: GOVERNMENT_AUTHORITIES.UIDAI.name,
+        authorityShortName: GOVERNMENT_AUTHORITIES.UIDAI.shortName,
+        portalName: GOVERNMENT_AUTHORITIES.UIDAI.portalName,
+        officialUrl: GOVERNMENT_AUTHORITIES.UIDAI.officialUrl,
+        summary: "Correct demographic name record at official issuing authority.",
+        steps: [
+          "Identify which document reflects your legal name.",
+          "Visit the issuing authority portal or authorized correction centre.",
+          "Submit valid supporting identity proof.",
+          "Obtain updated official credential and upload to DigiReady.",
+        ],
+      });
+    }
+
+    const docNames = affectedDocuments.map((d) => d.documentDisplayName).join(" and ");
+    const nameValues = affectedDocuments.map((d) => `"${d.value}"`).join(" vs ");
+
+    return {
+      id: `conflict-guidance-name`,
+      conflictType: "NAME_MISMATCH",
+      resolutionPath: "AADHAAR_UPDATE",
+      fieldKey: "name",
+      fieldLabel: "Applicant Full Name",
+      title: "Identity Name Conflict",
+      explanation: `Your ${docNames} contain different names (${nameValues}). DigiReady cannot determine which official document is correct.`,
+      affectedDocuments,
+      recommendedAuthority: GOVERNMENT_AUTHORITIES.UIDAI,
+      authorityBranches: branches,
+      whyCorrectionMayBeRequired:
+        "Government and examination application portals require matching candidate names for verification, biometric matching, and certificate issuance.",
+      numberedSteps: [
+        "1. Identify the discrepancy: Review the spelling on each document.",
+        "2. Determine legal name: Decide which name represents your correct legal identity.",
+        "3. Option A (Update Aadhaar): If Education Board name is correct, visit an authorized Aadhaar Seva Kendra.",
+        "4. Carry supporting proof: Provide your 10th Marks Card or Passport as Proof of Identity (PoI).",
+        "5. Submit update request: Fill demographic update form at myaadhaar.uidai.gov.in or in person.",
+        "6. Biometric verification: Complete biometric confirmation if requested by UIDAI.",
+        "7. Note URN: Save your Update Request Number to track progress.",
+        "8. Option B (Correct Education Record): If Aadhaar is correct, contact your school or State Education Board.",
+        "9. Submit school application: Apply through your institution head with municipal Birth Certificate / Aadhaar.",
+        "10. Board processing: Await issuance of amended marks certificate by the Board.",
+        "11. Option C (Update Revenue Certificate): If Caste/Income name differs, apply for fresh certificate via Nadakacheri.",
+        "12. Upload corrected document: Once updated, upload the new image to DigiReady to clear this conflict.",
+      ],
+      requiredDocuments: [
+        "Aadhaar Card (original / e-Aadhaar)",
+        "SSLC / 10th Marks Card (or School Leaving Certificate)",
+        "Birth Certificate (if applicable)",
+        "Gazette Notification (in case of legal name change)",
+      ],
+      caution:
+        "DigiReady does not alter government records or statutory databases. All corrections must be completed directly through the respective issuing authority.",
+      officialProcessNote:
+        "Do not submit applications with conflicting name variations without official rectification, as discrepancies can lead to rejection during document verification.",
+      nextAction: "View Official Name Correction Steps",
+      recheckAfterCorrection: "Upload corrected document to automatically clear this conflict.",
+    };
+  }
+
+  // 2. DOB MISMATCH
+  if (fieldKey === "dateOfBirth") {
+    const branches: AuthorityCorrectionBranch[] = [];
+
+    if (hasAadhaar) {
+      branches.push({
+        documentTypeKey: "GOVERNMENT_IDENTITY_PROOF",
+        documentDisplayName: "Aadhaar Card",
+        authorityName: GOVERNMENT_AUTHORITIES.UIDAI.name,
+        authorityShortName: GOVERNMENT_AUTHORITIES.UIDAI.shortName,
+        portalName: GOVERNMENT_AUTHORITIES.UIDAI.portalName,
+        officialUrl: GOVERNMENT_AUTHORITIES.UIDAI.officialUrl,
+        summary: "Update Date of Birth in Aadhaar per UIDAI Date of Birth Update Policy.",
+        steps: [
+          "Note: UIDAI permits Date of Birth update only ONCE in a lifetime without exceptional approval.",
+          "Carry original Birth Certificate or 10th Marks Card as valid Proof of Date of Birth (DoB).",
+          "Visit an authorized Aadhaar Seva Kendra for biometric-verified update.",
+          "Receive update receipt with Update Request Number (URN).",
+          "Download updated e-Aadhaar and upload to DigiReady.",
+        ],
+      });
+    }
+
+    if (hasEducation) {
+      branches.push({
+        documentTypeKey: "SECONDARY_MARKS_CARD",
+        documentDisplayName: "Education Marks Card / Certificate",
+        authorityName: GOVERNMENT_AUTHORITIES.STATE_EDUCATION_BOARD.name,
+        authorityShortName: GOVERNMENT_AUTHORITIES.STATE_EDUCATION_BOARD.shortName,
+        portalName: GOVERNMENT_AUTHORITIES.STATE_EDUCATION_BOARD.portalName,
+        summary: "Apply for Date of Birth correction in school records / State Board.",
+        steps: [
+          "Obtain an extract of admission register / Birth Certificate issued by Registrar of Births.",
+          "Submit application through the school institution to the District Education Officer / Board.",
+          "Pay the statutory verification fee.",
+          "Receive amended marks sheet and upload to DigiReady.",
         ],
       });
     }
@@ -107,94 +307,38 @@ export function generateConflictGuidance(
     const docNames = affectedDocuments.map((d) => d.documentDisplayName).join(" and ");
 
     return {
-      id: `conflict-guidance-name`,
-      conflictType: "NAME_MISMATCH",
-      resolutionPath,
-      fieldKey: "name",
-      fieldLabel: "Applicant Name",
-      title: "Identity Name Conflict",
-      explanation: `Your ${docNames} contain different names. DigiReady cannot modify official documents. Review the official correction process before submitting your application.`,
-      affectedDocuments,
-      recommendedAuthority,
-      authorityBranches: branches,
-      whyCorrectionMayBeRequired:
-        "Public entrance exams (such as KCET) and government scholarship portals cross-verify candidate names across ID proofs and educational qualifications. Name discrepancies may cause verification holds or rejection at counseling.",
-      numberedSteps: [
-        "Confirm which name is the correct legal/official name you intend to use.",
-        "Identify the document that contains the incorrect or outdated information.",
-        "Gather the accepted supporting identity/name documents required for the correction.",
-        "Visit an authorized service channel or portal (e.g. myAadhaar / Aadhaar Seva Kendra for UIDAI, or School Principal for Board certificates).",
-        "Request the appropriate demographic/name update with the issuing authority.",
-        "Submit the required supporting proof documents.",
-        "Complete the identity verification / biometric process if required by the authority.",
-        "Keep the official acknowledgement / update request details (such as URN / application number).",
-        "Wait for the official authority to complete their verification and update cycle.",
-        "Obtain or download the updated official document record.",
-        "Return to DigiReady and upload the updated document image to your vault.",
-        "DigiReady will re-run the consistency check to verify that all records align.",
-      ],
-      requiredDocuments: [
-        "Accepted Proof of Identity (PoI) per authority guidelines (e.g. Passport, 10th Marks Card, PAN Card, Birth Certificate)",
-        "Existing document copy showing previous entry",
-        "Official update request form / online acknowledgement receipt",
-      ],
-      caution:
-        "Requirements and acceptable supporting documents may change. Confirm the current requirements directly through the official issuing authority. DigiReady does not alter government records.",
-      officialProcessNote:
-        "Do not edit DigiReady metadata to pretend an official document is fixed. You must obtain an officially corrected document from the issuing authority.",
-      nextAction: "Review Official Correction Steps",
-      recheckAfterCorrection:
-        "After receiving your updated document from the issuing authority, upload the new image into your DigiReady vault to verify consistency.",
-    };
-  }
-
-  // 2. DATE OF BIRTH MISMATCH
-  if (fieldKey === "dateOfBirth") {
-    const docNames = affectedDocuments.map((d) => d.documentDisplayName).join(" and ");
-    return {
       id: `conflict-guidance-dob`,
       conflictType: "DOB_MISMATCH",
-      resolutionPath: hasAadhaar ? "AADHAAR_UPDATE" : "EDUCATION_BOARD_CORRECTION",
+      resolutionPath: "AADHAAR_UPDATE",
       fieldKey: "dateOfBirth",
       fieldLabel: "Date of Birth",
-      title: "Date of Birth Mismatch",
-      explanation: `Your ${docNames} contain different dates of birth. Date of birth is a primary identifier in government admissions and scholarship portals.`,
+      title: "Date of Birth Discrepancy",
+      explanation: `Your ${docNames} show different dates of birth.`,
       affectedDocuments,
-      recommendedAuthority: hasAadhaar ? GOVERNMENT_AUTHORITIES.UIDAI : GOVERNMENT_AUTHORITIES.STATE_EDUCATION_BOARD,
-      authorityBranches: [
-        {
-          documentTypeKey: "GOVERNMENT_IDENTITY_PROOF",
-          documentDisplayName: "Aadhaar Card",
-          authorityName: GOVERNMENT_AUTHORITIES.UIDAI.name,
-          authorityShortName: GOVERNMENT_AUTHORITIES.UIDAI.shortName,
-          portalName: GOVERNMENT_AUTHORITIES.UIDAI.portalName,
-          officialUrl: GOVERNMENT_AUTHORITIES.UIDAI.officialUrl,
-          summary: "Aadhaar Date of Birth can be updated once with a valid Birth Certificate or SSLC Marks Card.",
-          steps: [
-            "Visit an authorized Aadhaar Seva Kendra with your original Birth Certificate or 10th Marks Card.",
-            "Submit DOB update request form with biometric authentication.",
-            "Obtain updated Aadhaar and upload it to DigiReady.",
-          ],
-        },
-      ],
+      recommendedAuthority: GOVERNMENT_AUTHORITIES.UIDAI,
+      authorityBranches: branches,
       whyCorrectionMayBeRequired:
-        "Mismatched date of birth values will cause automated API validation failures during examination registration.",
+        "Eligibility age limits and candidate identity verification strictly depend on a consistent date of birth across identity proof and academic records.",
       numberedSteps: [
-        "Determine which document displays your true legal Date of Birth.",
-        "Obtain a certified municipal Birth Certificate or primary educational record.",
-        "Initiate a Date of Birth correction with the issuing authority whose record is incorrect.",
-        "Undergo biometric / in-person verification if mandated by the authority.",
-        "Receive the updated credential and upload the new image to DigiReady.",
+        "Determine the true legal date of birth according to your official Birth Certificate issued by the Municipal Corporation / Gram Panchayat.",
+        "If Aadhaar date of birth is incorrect: Visit an Aadhaar Seva Kendra with your Birth Certificate or SSLC Marks Card.",
+        "If School / Marks Card is incorrect: Contact your educational institution to apply for board record amendment.",
+        "Upload the revised official document to DigiReady once issued.",
       ],
-      requiredDocuments: ["Official Birth Certificate", "Secondary School Leaving Certificate (SSLC)"],
-      caution: "UIDAI permits DOB correction only with valid documentary proof. Follow official guidelines.",
-      officialProcessNote: "DigiReady cannot alter date of birth records registered with statutory bodies.",
-      nextAction: "View DOB Correction Guidance",
-      recheckAfterCorrection: "Upload updated document image to re-evaluate vault consistency.",
+      requiredDocuments: [
+        "Birth Certificate (issued under Registration of Births and Deaths Act)",
+        "SSLC / 10th Standard Marks Card",
+        "Passport (if available)",
+      ],
+      caution:
+        "UIDAI restricts Date of Birth changes to a single update. Ensure your supporting document is completely authentic.",
+      officialProcessNote: "DigiReady cannot alter date of birth records on any official certificate.",
+      nextAction: "View DOB Correction Procedures",
+      recheckAfterCorrection: "Upload corrected document to automatically clear this conflict.",
     };
   }
 
-  // 3. PARENT / GUARDIAN NAME MISMATCH
+  // 3. PARENT NAME MISMATCH
   if (fieldKey === "parentName") {
     const docNames = affectedDocuments.map((d) => d.documentDisplayName).join(" and ");
     return {

@@ -6,17 +6,17 @@ import { usePathname } from "next/navigation";
 import {
   IconDashboard,
   IconFolder,
-  IconIssued,
-  IconUpload,
-  IconUser,
+  IconShield,
+  IconHelp,
+  IconSparkles,
 } from "@/components/ui/Icons";
 
 const mobileNavItems = [
   { href: "/dashboard", label: "Dashboard", icon: IconDashboard },
+  { href: "/services", label: "Services", icon: IconShield },
+  { href: "/guidance", label: "Guidance", icon: IconHelp },
   { href: "/documents", label: "Vault", icon: IconFolder },
-  { href: "/issued", label: "Issued", icon: IconIssued },
-  { href: "/uploaded", label: "Uploaded", icon: IconUpload },
-  { href: "/profile", label: "Profile", icon: IconUser },
+  { href: "/demo", label: "Demo", icon: IconSparkles },
 ];
 
 export function MobileNav() {

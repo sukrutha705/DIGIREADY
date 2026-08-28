@@ -24,7 +24,7 @@ export async function GET(
       return NextResponse.json(
         {
           error: `Requirements are not configured for service '${decodedServiceName}'.`,
-          supportedServices: ["KCET", "Government Scholarship", "Income Certificate", "Passport", "EPFO PF Transfer", "Pension Scheme"],
+          message: `Service "${decodedServiceName}" not found or not supported yet.`,
         },
         { status: 404 }
       );
@@ -38,3 +38,4 @@ export async function GET(
     );
   }
 }
+

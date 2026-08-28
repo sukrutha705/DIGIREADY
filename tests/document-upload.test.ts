@@ -163,29 +163,50 @@ describe("Phase 8: Document Image Upload, Extraction & Verification", () => {
   });
 
   describe("2. Deterministic Document Type Detection", () => {
-    it("detects Income Certificate from filename cues", async () => {
-      const res = await detectDocumentType("income_certificate_2024.jpg", undefined, undefined, prisma);
+    it("detects Income Certificate with textual evidence", async () => {
+      const res = await detectDocumentType(
+        "income_certificate_2024.jpg",
+        "Income Certificate\nAnnual Family Income: Rs. 250000\nDepartment of Revenue, Tahsildar",
+        undefined,
+        prisma
+      );
       expect(res.canonicalKey).toBe("INCOME_CERTIFICATE");
-      expect(res.confidence).toBeGreaterThanOrEqual(0.8);
+      expect(res.confidence).toBeGreaterThanOrEqual(0.50);
       expect(res.status).toBe("SUCCESS");
     });
 
-    it("detects SSLC 10th Marks Card from cues", async () => {
-      const res = await detectDocumentType("my_sslc_marks_card.png", undefined, undefined, prisma);
+    it("detects SSLC 10th Marks Card with textual evidence", async () => {
+      const res = await detectDocumentType(
+        "my_sslc_marks_card.png",
+        "Secondary School Leaving Certificate\nSSLC Examination\nKarnataka Secondary Education Examination Board\nMarks Obtained: 560",
+        undefined,
+        prisma
+      );
       expect(res.canonicalKey).toBe("SECONDARY_MARKS_CARD");
       expect(res.status).toBe("SUCCESS");
     });
 
-    it("detects 2nd PUC 12th Marks Card from cues", async () => {
-      const res = await detectDocumentType("2nd_puc_marks_statement.webp", undefined, undefined, prisma);
+    it("detects 2nd PUC 12th Marks Card with textual evidence", async () => {
+      const res = await detectDocumentType(
+        "2nd_puc_marks_statement.webp",
+        "Pre-University Certificate\n2nd PUC Examination\nDepartment of Pre-University Education\nStatement of Marks",
+        undefined,
+        prisma
+      );
       expect(res.canonicalKey).toBe("HIGHER_SECONDARY_MARKS_CARD");
       expect(res.status).toBe("SUCCESS");
     });
 
-    it("honors explicit user documentTypeOverride", async () => {
+    it("rejects classification from filename alone without OCR text (never relies on filename alone)", async () => {
+      const res = await detectDocumentType("income_certificate_2024.jpg", undefined, undefined, prisma);
+      expect(res.canonicalKey).toBe("UNKNOWN");
+      expect(res.status).toBe("NEEDS_REVIEW");
+    });
+
+    it("honors explicit user documentTypeOverride with NEEDS_REVIEW when OCR is absent", async () => {
       const res = await detectDocumentType("random_image.jpg", undefined, "CASTE_CERTIFICATE", prisma);
       expect(res.canonicalKey).toBe("CASTE_CERTIFICATE");
-      expect(res.confidence).toBe(1.0);
+      expect(res.status).toBe("NEEDS_REVIEW");
     });
 
     it("returns NEEDS_REVIEW when document cannot be confidently identified", async () => {
@@ -197,7 +218,7 @@ describe("Phase 8: Document Image Upload, Extraction & Verification", () => {
   });
 
   describe("3. Schema-Specific Field Extraction", () => {
-    it("extracts schema fields for Income Certificate", () => {
+    it("extracts schema fields for Income Certificate (without OCR text: fields exist but UNCONFIRMED)", () => {
       const res = extractFieldsForDocument({
         canonicalKey: "INCOME_CERTIFICATE",
         displayName: "Income Certificate",
@@ -205,12 +226,41 @@ describe("Phase 8: Document Image Upload, Extraction & Verification", () => {
       });
 
       expect(res.documentTypeKey).toBe("INCOME_CERTIFICATE");
-      expect(res.fields.find((f) => f.fieldName === "applicantName")).toBeDefined();
-      expect(res.fields.find((f) => f.fieldName === "annualIncome")).toBeDefined();
-      expect(res.fields.find((f) => f.fieldName === "certificateRef")).toBeDefined();
+      // Required fields exist but are UNCONFIRMED since there is no OCR text
+      const nameField = res.fields.find((f) => f.fieldName === "applicantName");
+      expect(nameField).toBeDefined();
+      expect(nameField?.status).toBe("UNCONFIRMED");
+      expect(nameField?.value).toBe(""); // No fabricated value
+
+      const incomeField = res.fields.find((f) => f.fieldName === "annualIncome");
+      expect(incomeField).toBeDefined();
+      expect(incomeField?.status).toBe("UNCONFIRMED");
+
+      // certificateRef only appears when OCR evidence supports it
+      // Without rawText, it should NOT be present (truthful extraction)
     });
 
-    it("extracts schema fields for 10th SSLC Marks Card", () => {
+    it("extracts schema fields for Income Certificate WITH OCR evidence", () => {
+      const res = extractFieldsForDocument({
+        canonicalKey: "INCOME_CERTIFICATE",
+        displayName: "Income Certificate",
+        fileName: "income.jpg",
+        rawText: "Income Certificate\nApplicant Name: Ramesh Kumar\nFather Name: Suresh Kumar\nAnnual Income: Rs. 250000\nCertificate No: RD2024-1234",
+      });
+
+      expect(res.documentTypeKey).toBe("INCOME_CERTIFICATE");
+      expect(res.status).toBe("SUCCESS");
+      const nameField = res.fields.find((f) => f.fieldName === "applicantName");
+      expect(nameField?.status).toBe("FOUND");
+      expect(nameField?.value).toBe("Ramesh Kumar");
+      const incomeField = res.fields.find((f) => f.fieldName === "annualIncome");
+      expect(incomeField?.status).toBe("FOUND");
+      const certField = res.fields.find((f) => f.fieldName === "certificateRef");
+      expect(certField).toBeDefined();
+      expect(certField?.status).toBe("FOUND");
+    });
+
+    it("extracts schema fields for 10th SSLC Marks Card (without OCR text: core fields UNCONFIRMED)", () => {
       const res = extractFieldsForDocument({
         canonicalKey: "SECONDARY_MARKS_CARD",
         displayName: "SSLC Marks Card",
@@ -220,6 +270,21 @@ describe("Phase 8: Document Image Upload, Extraction & Verification", () => {
       expect(res.fields.find((f) => f.fieldName === "candidateName")).toBeDefined();
       expect(res.fields.find((f) => f.fieldName === "fatherName")).toBeDefined();
       expect(res.fields.find((f) => f.fieldName === "dateOfBirth")).toBeDefined();
+      // board and registrationNumber only appear when OCR evidence supports them
+    });
+
+    it("extracts schema fields for 10th SSLC Marks Card WITH OCR evidence", () => {
+      const res = extractFieldsForDocument({
+        canonicalKey: "SECONDARY_MARKS_CARD",
+        displayName: "SSLC Marks Card",
+        fileName: "sslc.png",
+        rawText: "SSLC Marks Card\nCandidate Name: Sukrutha K\nFather Name: Kumar K\nDOB: 2006-05-15\nBoard: KSEEB\nRegistration No: SSLC-2022-8812\nSchool: Example High School",
+      });
+
+      expect(res.status).toBe("SUCCESS");
+      expect(res.fields.find((f) => f.fieldName === "candidateName")?.status).toBe("FOUND");
+      expect(res.fields.find((f) => f.fieldName === "fatherName")?.status).toBe("FOUND");
+      expect(res.fields.find((f) => f.fieldName === "dateOfBirth")?.status).toBe("FOUND");
       expect(res.fields.find((f) => f.fieldName === "board")).toBeDefined();
       expect(res.fields.find((f) => f.fieldName === "registrationNumber")).toBeDefined();
     });
@@ -238,7 +303,7 @@ describe("Phase 8: Document Image Upload, Extraction & Verification", () => {
         "income_certificate_demo.jpg",
         "image/jpeg",
         uploadUserId,
-        { duplicateResolution: "keep_both" },
+        { duplicateResolution: "keep_both", documentTypeOverride: "INCOME_CERTIFICATE" },
         prisma
       );
 
@@ -322,7 +387,7 @@ describe("Phase 8: Document Image Upload, Extraction & Verification", () => {
         "income_certificate_duplicate.png",
         "image/png",
         uploadUserId,
-        {},
+        { documentTypeOverride: "INCOME_CERTIFICATE" },
         prisma
       );
 
@@ -335,7 +400,7 @@ describe("Phase 8: Document Image Upload, Extraction & Verification", () => {
         "income_certificate_duplicate.png",
         "image/png",
         uploadUserId,
-        { duplicateResolution: "replace_existing" },
+        { duplicateResolution: "replace_existing", documentTypeOverride: "INCOME_CERTIFICATE" },
         prisma
       );
 

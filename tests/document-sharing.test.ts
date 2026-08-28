@@ -308,11 +308,24 @@ describe("Phase 7.5: Secure Document Sharing & Consent Layer", () => {
     });
 
     it("revokes active share immediately and prevents further active token access", async () => {
-      const doc = demoDocs[0];
+      const isoUser = await prisma.user.create({ data: { displayName: "Revoke Test Citizen" } });
+      const docType = await prisma.documentType.findUnique({
+        where: { canonicalKey: demoDocs[0].documentTypeKey },
+      });
+      const isoDoc = await prisma.document.create({
+        data: {
+          userId: isoUser.id,
+          documentTypeId: docType!.id,
+          displayName: "Isolated Test Document",
+          issuer: "Test Authority",
+          source: "ISSUED",
+        },
+      });
+
       const share = await createDocumentShare(
-        demoUserId,
+        isoUser.id,
         {
-          documentId: doc.id,
+          documentId: isoDoc.id,
           recipientName: "Scholarship Authority",
           purpose: "Eligibility review",
           includedFieldIds: [],
@@ -324,7 +337,7 @@ describe("Phase 7.5: Secure Document Sharing & Consent Layer", () => {
       expect(share.status).toBe("ACTIVE");
 
       // Revoke share
-      const revoked = await revokeDocumentShare(demoUserId, share.id, prisma);
+      const revoked = await revokeDocumentShare(isoUser.id, share.id, prisma);
       expect(revoked.status).toBe("REVOKED");
       expect(revoked.revokedAt).not.toBeNull();
 
@@ -334,7 +347,9 @@ describe("Phase 7.5: Secure Document Sharing & Consent Layer", () => {
       expect(resolved?.sharedFields.length).toBe(0);
 
       // Cleanup
-      await prisma.documentShare.delete({ where: { id: share.id } }).catch(() => {});
+      await prisma.documentShare.deleteMany({ where: { userId: isoUser.id } }).catch(() => {});
+      await prisma.document.deleteMany({ where: { userId: isoUser.id } }).catch(() => {});
+      await prisma.user.delete({ where: { id: isoUser.id } }).catch(() => {});
     });
   });
 

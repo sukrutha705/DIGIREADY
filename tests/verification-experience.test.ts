@@ -145,7 +145,7 @@ describe("Phase 8.1: Realistic Document Verification UX, Conflict Resolution & P
         "income_certificate_citizen.jpg",
         "image/jpeg",
         testUserId,
-        { duplicateResolution: "keep_both" },
+        { duplicateResolution: "keep_both", documentTypeOverride: "INCOME_CERTIFICATE" },
         prisma
       );
 
@@ -253,7 +253,7 @@ describe("Phase 8.1: Realistic Document Verification UX, Conflict Resolution & P
     it("allows manual selection override when detection is uncertain", async () => {
       const detection = await detectDocumentType("unnamed_scan_9921.png", undefined, "CASTE_CERTIFICATE", prisma);
       expect(detection.canonicalKey).toBe("CASTE_CERTIFICATE");
-      expect(detection.confidence).toBe(1.0);
+      expect(detection.status).toBe("NEEDS_REVIEW");
     });
   });
 

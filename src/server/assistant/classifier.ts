@@ -23,12 +23,19 @@ export function normalizeMessage(input: string): string {
  * Extracts a recognized service entity from the normalized message.
  */
 export function extractService(normalized: string): string | undefined {
+  // Sort all aliases by length descending to match most specific service first (e.g. "jee advanced" before "jee")
+  const allAliases: Array<{ key: string; alias: string }> = [];
   for (const svc of KNOWN_SERVICES) {
     for (const alias of svc.aliases) {
-      const pattern = new RegExp(`\\b${alias.replace(/\s+/g, "\\s+")}\\b`, "i");
-      if (pattern.test(normalized)) {
-        return svc.key;
-      }
+      allAliases.push({ key: svc.key, alias });
+    }
+  }
+  allAliases.sort((a, b) => b.alias.length - a.alias.length);
+
+  for (const item of allAliases) {
+    const pattern = new RegExp(`\\b${item.alias.replace(/\s+/g, "\\s+")}\\b`, "i");
+    if (pattern.test(normalized)) {
+      return item.key;
     }
   }
   return undefined;

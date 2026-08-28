@@ -10,8 +10,8 @@ export type FieldStatus = "FOUND" | "UNCONFIRMED" | "NOT_FOUND";
 export interface ExtractedField {
   fieldId: string;
   fieldName: string;
-  fieldType: "TEXT" | "DATE" | "NAME" | "ORGANIZATION" | "ADDRESS" | "IDENTIFIER";
-  semanticRole: "CANDIDATE_NAME" | "PARENT_NAME" | "DATE_OF_BIRTH" | "IDENTIFIER" | "ADDRESS" | "ORGANIZATION" | "GENDER" | "OTHER" | null;
+  fieldType: "TEXT" | "DATE" | "NAME" | "ORGANIZATION" | "ADDRESS" | "IDENTIFIER" | "CURRENCY";
+  semanticRole: "CANDIDATE_NAME" | "PARENT_NAME" | "DATE_OF_BIRTH" | "IDENTIFIER" | "ADDRESS" | "ORGANIZATION" | "GENDER" | "INCOME" | "CATEGORY" | "OTHER" | null;
   value: string;
   normalizedValue: string;
   confidence: number; // 0.0 to 1.0
@@ -23,7 +23,7 @@ export interface ExtractedField {
 export interface DocumentExtractionResult {
   documentTypeKey: string;
   documentTypeId?: string;
-  displayName: string;
+  displayName?: string;
   issuer: string;
   issueDate?: string | null;
   expiryDate?: string | null;
@@ -48,6 +48,7 @@ export interface ProcessUploadOptions {
   documentTypeOverride?: string;
   duplicateResolution?: DuplicateResolutionOption;
   existingDocumentIdToReplace?: string;
+  metadataHints?: Record<string, string>;
 }
 
 export interface ProcessUploadResult {

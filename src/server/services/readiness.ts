@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { PrismaClient } from "@prisma/client";
-import { getServiceRequirement } from "./registry";
+import { getServiceBySlug, getServiceRequirement } from "./registry";
 import { ServiceReadiness, ReadinessDocument } from "./types";
 import { getUserDocuments } from "@/server/vault";
 
@@ -13,6 +13,7 @@ function normalizeDocToken(str: string): string {
 
 /**
  * Evaluates a citizen's vault documents against the requirements of a specified service.
+ * Supports slug, key, name, or alias.
  * Returns a structured ServiceReadiness DTO, or null if the service is unknown.
  */
 export async function getServiceReadiness(
@@ -20,7 +21,15 @@ export async function getServiceReadiness(
   serviceName: string,
   db: PrismaClient = prisma
 ): Promise<ServiceReadiness | null> {
-  const serviceReq = getServiceRequirement(serviceName);
+  if (!serviceName || typeof serviceName !== "string" || !serviceName.trim()) {
+    return null;
+  }
+
+  // 1. Try in-memory canonical requirement first, then database
+  let serviceReq = getServiceRequirement(serviceName);
+  if (!serviceReq) {
+    serviceReq = await getServiceBySlug(serviceName, db);
+  }
   if (!serviceReq) {
     return null;
   }
@@ -39,17 +48,28 @@ export async function getServiceReadiness(
       const normDocName = normalizeDocToken(doc.displayName);
       const normDocTypeName = normalizeDocToken(doc.documentTypeName);
       const normReqName = normalizeDocToken(req.displayName);
+      const normReqType = normalizeDocToken(req.documentType);
 
-      // 2. Match display name / type name
-      if (normDocName === normReqName || normDocTypeName === normReqName) {
+      // 2. Match display name / type name / canonical key
+      if (
+        normDocName === normReqName ||
+        normDocTypeName === normReqName ||
+        normDocName === normReqType ||
+        normDocTypeName === normReqType
+      ) {
         return true;
       }
 
       // 3. Match aliases
-      if (req.aliases) {
+      if (req.aliases && req.aliases.length > 0) {
         for (const alias of req.aliases) {
           const normAlias = normalizeDocToken(alias);
-          if (normDocName.includes(normAlias) || normDocTypeName.includes(normAlias) || normAlias === normDocName) {
+          if (
+            normDocName.includes(normAlias) ||
+            normDocTypeName.includes(normAlias) ||
+            normAlias === normDocName ||
+            normAlias === normDocTypeName
+          ) {
             return true;
           }
         }
@@ -63,6 +83,8 @@ export async function getServiceReadiness(
         documentType: req.documentType,
         displayName: req.displayName,
         required: req.required,
+        condition: req.condition || null,
+        notes: req.notes || null,
         status: "AVAILABLE",
         documentId: matched.id,
         matchedDocumentName: matched.displayName,
@@ -73,6 +95,8 @@ export async function getServiceReadiness(
       documentType: req.documentType,
       displayName: req.displayName,
       required: req.required,
+      condition: req.condition || null,
+      notes: req.notes || null,
       status: "MISSING",
     };
   });
@@ -84,6 +108,11 @@ export async function getServiceReadiness(
   return {
     serviceId: serviceReq.serviceId,
     serviceName: serviceReq.serviceName,
+    slug: serviceReq.slug || serviceReq.serviceId,
+    authority: serviceReq.authority || null,
+    jurisdiction: serviceReq.jurisdiction || null,
+    officialWebsite: serviceReq.officialWebsite || null,
+    officialApplicationUrl: serviceReq.officialApplicationUrl || null,
     description: serviceReq.description,
     requiredCount: mandatoryDocs.length,
     availableCount: availableMandatory.length,
@@ -92,3 +121,4 @@ export async function getServiceReadiness(
     documents: evaluatedDocuments,
   };
 }
+

@@ -7,6 +7,10 @@ import { verifyDocumentByType } from "@/server/verification/verifier";
 import { getSharePreview } from "@/server/sharing/service";
 import { getApplicationJourney } from "@/server/journey/service";
 import { getVaultConsistencyAssessment } from "@/server/consistency";
+import { evaluateServiceEligibility } from "@/server/eligibility/service";
+import { getApplicationWindowInfo } from "@/server/application-window/service";
+import { getCorrectionCentres } from "@/server/centres/service";
+import { GOVERNMENT_AUTHORITIES } from "@/server/authorities";
 import { getDemoUser, getUserDocuments } from "@/server/vault";
 import type { ServiceReadiness } from "@/server/services/types";
 import type { DocumentGuidance } from "@/server/guidance/types";
@@ -32,7 +36,222 @@ async function generateAssistantResponse(
   const rawMsg = (intent.originalMessage || "").toLowerCase();
   const demoUser = explicitUserId ? { id: explicitUserId } : await getDemoUser();
 
-  // Handle explicit consistency / conflict inquiries
+  // 0. Handle Location / City-based Correction Centre Queries
+  const supportedCities = [
+    "bengaluru",
+    "bangalore",
+    "delhi",
+    "mumbai",
+    "bombay",
+    "mysuru",
+    "mysore",
+    "mangalore",
+    "mangaluru",
+    "hyderabad",
+    "chennai",
+    "madras",
+    "pune",
+    "kolkata",
+    "calcutta",
+    "belagavi",
+    "hubballi",
+  ];
+  const matchedCity = supportedCities.find((c) => rawMsg.includes(c));
+
+  if (
+    matchedCity ||
+    rawMsg.includes("correction centre") ||
+    rawMsg.includes("correction center") ||
+    rawMsg.includes("aadhaar seva kendra") ||
+    rawMsg.includes("passport seva kendra") ||
+    rawMsg.includes("find centre") ||
+    rawMsg.includes("find center")
+  ) {
+    const city = matchedCity || "Bengaluru";
+    let authorityId = "UIDAI";
+    if (rawMsg.includes("passport")) authorityId = "PASSPORT_SEVA";
+    else if (
+      rawMsg.includes("income") ||
+      rawMsg.includes("caste") ||
+      rawMsg.includes("domicile") ||
+      rawMsg.includes("nadakacheri") ||
+      rawMsg.includes("revenue")
+    )
+      authorityId = "REVENUE_DEPARTMENT";
+    else if (rawMsg.includes("pan") || rawMsg.includes("tax"))
+      authorityId = "INCOME_TAX_DEPARTMENT";
+    else if (
+      rawMsg.includes("driving") ||
+      rawMsg.includes("rto") ||
+      rawMsg.includes("licence") ||
+      rawMsg.includes("license")
+    )
+      authorityId = "TRANSPORT_DEPARTMENT";
+
+    const centreResult = getCorrectionCentres(authorityId, city);
+    if (centreResult.isVerifiedAvailable && centreResult.verifiedCentres.length > 0) {
+      const list = centreResult.verifiedCentres
+        .map(
+          (c, i) =>
+            `${i + 1}. **${c.centreName}** (✓ Officially Verified)\n   📍 ${c.address}${
+              c.pincode ? " - " + c.pincode : ""
+            }\n   🕒 ${c.workingHours || "Working hours: Mon-Fri"}`
+        )
+        .join("\n\n");
+      return {
+        response: `Here are the verified official correction centres for **${centreResult.authorityName}** in **${centreResult.normalizedCity}**:\n\n${list}\n\n*Official Source: ${
+          centreResult.verifiedCentres[0]?.officialSource || centreResult.officialPortalName
+        }*\n\n🔒 *Privacy Note: DigiReady only uses your city to find centres and does not track your exact GPS location.*`,
+        suggestions: [
+          "How do I fix my document conflict?",
+          "Check my documents",
+          "I want to apply for KCET",
+        ],
+      };
+    } else {
+      return {
+        response: `Official correction centres could not be verified for **${centreResult.normalizedCity}**.\n\nFor safety, DigiReady won't guess or recommend an unverified centre. You can locate an authorized center directly on the official authority portal: [${centreResult.officialPortalName}](${centreResult.officialLocatorUrl}).`,
+        suggestions: [
+          "Check my documents",
+          "I want to apply for KCET",
+          "Find centres in Bengaluru",
+        ],
+      };
+    }
+  }
+
+  // 0.1 Handle Specific "Where/How can I fix/correct" Inquiries
+  if (
+    rawMsg.includes("where can i fix") ||
+    rawMsg.includes("where can i correct") ||
+    rawMsg.includes("how do i fix") ||
+    rawMsg.includes("how do i correct") ||
+    rawMsg.includes("how to fix") ||
+    rawMsg.includes("how to correct") ||
+    rawMsg.includes("how to update") ||
+    rawMsg.includes("where to fix")
+  ) {
+    let auth = GOVERNMENT_AUTHORITIES.UIDAI;
+    let docType = "Aadhaar Card";
+    if (rawMsg.includes("income") || rawMsg.includes("caste") || rawMsg.includes("domicile")) {
+      auth = GOVERNMENT_AUTHORITIES.REVENUE_DEPARTMENT;
+      docType = "Revenue / Income / Caste Certificate";
+    } else if (rawMsg.includes("passport")) {
+      auth = GOVERNMENT_AUTHORITIES.PASSPORT_SEVA;
+      docType = "Passport";
+    } else if (rawMsg.includes("pan")) {
+      auth = GOVERNMENT_AUTHORITIES.INCOME_TAX_DEPARTMENT;
+      docType = "PAN Card";
+    } else if (
+      rawMsg.includes("driving") ||
+      rawMsg.includes("rto") ||
+      rawMsg.includes("licence") ||
+      rawMsg.includes("license")
+    ) {
+      auth = GOVERNMENT_AUTHORITIES.TRANSPORT_DEPARTMENT;
+      docType = "Driving Licence";
+    } else if (
+      rawMsg.includes("marks") ||
+      rawMsg.includes("sslc") ||
+      rawMsg.includes("puc") ||
+      rawMsg.includes("board")
+    ) {
+      auth = GOVERNMENT_AUTHORITIES.STATE_EDUCATION_BOARD;
+      docType = "Marks Card";
+    }
+
+    return {
+      response: `To correct your **${docType}**, you must submit a formal correction request through the official statutory authority: **${auth.name}** (${auth.shortName}).\n\n• **Official Portal:** ${auth.portalName}\n• **Process:** ${auth.officialProcessNote}\n\nDigiReady cannot alter official government records. Would you like help finding an official correction centre in your city?\n\nTell me which city you are currently in (e.g. *Bengaluru*, *Mysuru*, *Delhi*).`,
+      suggestions: [
+        "Find correction centres in Bengaluru",
+        "Find correction centres in Delhi",
+        "Do my documents have any conflicts?",
+        "Check readiness for KCET",
+      ],
+    };
+  }
+
+  // 1. Handle explicit Eligibility inquiries
+  if (
+    rawMsg.includes("eligible") ||
+    rawMsg.includes("eligibility") ||
+    rawMsg.includes("age limit") ||
+    rawMsg.includes("qualification for")
+  ) {
+    try {
+      const serviceTarget = intent.service || "KCET";
+      const eligibility = await evaluateServiceEligibility(demoUser.id, serviceTarget);
+      const journey = await getApplicationJourney(demoUser.id, serviceTarget);
+
+      let responseText = "";
+      if (eligibility.overallStatus === "ELIGIBLE") {
+        responseText = `Based on the information available in your DigiReady profile and vault, you are **eligible** for **${eligibility.serviceName}**!\n\n${eligibility.summary}`;
+      } else if (eligibility.overallStatus === "NOT_ELIGIBLE") {
+        responseText = `Based on the information available to DigiReady, you may not currently meet one or more statutory eligibility conditions for **${eligibility.serviceName}**:\n\n${eligibility.summary}\n\nSource: ${eligibility.sourceReference}`;
+      } else {
+        responseText = `To evaluate your eligibility for **${eligibility.serviceName}**, DigiReady needs additional profile details (${eligibility.missingFields.join(", ")}).\n\n${eligibility.summary}`;
+      }
+
+      return {
+        response: responseText,
+        journey: journey ?? null,
+        suggestions: [
+          `Check readiness for ${eligibility.serviceName}`,
+          `What documents do I need for ${eligibility.serviceName}?`,
+          "Check my documents",
+          "Do my documents have any conflicts?",
+        ],
+      };
+    } catch {
+      // Fall through
+    }
+  }
+
+  // 2. Handle explicit Deadline & Application Window inquiries
+  if (
+    rawMsg.includes("deadline") ||
+    rawMsg.includes("last date") ||
+    rawMsg.includes("when does") ||
+    rawMsg.includes("when is") ||
+    rawMsg.includes("registration close") ||
+    rawMsg.includes("application window") ||
+    rawMsg.includes("exam date")
+  ) {
+    try {
+      const serviceTarget = intent.service || "KCET";
+      const windowInfo = await getApplicationWindowInfo(serviceTarget);
+      const journey = await getApplicationJourney(demoUser.id, serviceTarget);
+
+      let responseText = `Here is the current official schedule for **${windowInfo.serviceName}**:\n\n• **Status:** ${windowInfo.statusLabel}`;
+      if (windowInfo.applicationStart) {
+        responseText += `\n• **Registration Opens:** ${new Date(windowInfo.applicationStart).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}`;
+      }
+      if (windowInfo.applicationEnd) {
+        responseText += `\n• **Application Deadline:** ${new Date(windowInfo.applicationEnd).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}`;
+      }
+      if (windowInfo.examDate) {
+        responseText += `\n• **Exam Date:** ${new Date(windowInfo.examDate).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}`;
+      }
+      if (windowInfo.notes) {
+        responseText += `\n\n${windowInfo.notes}`;
+      }
+      responseText += `\n\n*Source: ${windowInfo.sourceReference}*`;
+
+      return {
+        response: responseText,
+        journey: journey ?? null,
+        suggestions: [
+          `Check readiness for ${windowInfo.serviceName}`,
+          `Am I eligible for ${windowInfo.serviceName}?`,
+          `What documents do I need for ${windowInfo.serviceName}?`,
+        ],
+      };
+    } catch {
+      // Fall through
+    }
+  }
+
+  // 3. Handle explicit consistency / conflict inquiries
   if (
     rawMsg.includes("conflict") ||
     rawMsg.includes("mismatch") ||
@@ -41,24 +260,52 @@ async function generateAssistantResponse(
     rawMsg.includes("differ") ||
     rawMsg.includes("why is my application not ready") ||
     rawMsg.includes("why am i not ready") ||
+    rawMsg.includes("why can't i apply") ||
+    rawMsg.includes("why cannot i apply") ||
+    rawMsg.includes("what is blocking") ||
+    rawMsg.includes("blocking me") ||
     rawMsg.includes("not verified")
   ) {
     try {
       const consistency = await getVaultConsistencyAssessment(demoUser.id);
-      const journey = await getApplicationJourney(demoUser.id, "KCET");
+      const journey = await getApplicationJourney(demoUser.id, intent.service || "KCET");
 
-      if (consistency.hasConflicts) {
+      if (
+        consistency.hasConflicts ||
+        rawMsg.includes("different") ||
+        rawMsg.includes("differ") ||
+        rawMsg.includes("mismatch") ||
+        rawMsg.includes("conflict")
+      ) {
         const conflict = consistency.conflicts[0];
-        const affected = conflict?.entries.map((e) => `${e.documentDisplayName} ("${e.rawValue}")`).join(" and ") || "your documents";
+        const affected =
+          conflict?.entries.map((e) => `${e.documentDisplayName} ("${e.rawValue}")`).join(" and ") ||
+          "your documents";
 
         return {
-          response: `I found an identity conflict in your documents (${conflict?.fieldLabel || "Details"} differs between ${affected}).\n\nDigiReady cannot change the information on either official document. The next step is to determine which record needs correction and follow the issuing authority's official correction process.\n\nReview the official correction steps below:`,
+          response: `I found an identity conflict in your documents (${conflict?.fieldLabel || "Details"} differs between ${affected}).\n\nDigiReady cannot change the information on either official document or alter government records. The next step is to determine which record needs correction and follow the appropriate issuing authority's official correction process.\n\nFor Aadhaar, the relevant statutory authority is UIDAI. Would you like help locating an authorized correction centre near your city?`,
           consistency,
           journey: journey ?? null,
           suggestions: [
+            "Find correction centres in Bengaluru",
             "I want to apply for KCET",
+            "Check readiness for JEE Main",
             "What documents am I missing?",
-            "Can you check my 12th marks card?",
+          ],
+        };
+      } else if (journey && journey.blockers && journey.blockers.length > 0) {
+        const blockerList = journey.blockers
+          .map((b, i) => `${i + 1}. **${b.title}**: ${b.description}`)
+          .join("\n");
+
+        return {
+          response: `You are currently preparing for **${journey.serviceName}**, but **${journey.blockers.length} item(s) need attention** before you are ready to apply:\n\n${blockerList}\n\nReview the guidance and action steps in your Application Journey.`,
+          consistency,
+          journey: journey ?? null,
+          suggestions: [
+            "Check my documents",
+            "How do I fix my document conflict?",
+            `Am I eligible for ${journey.serviceName}?`,
           ],
         };
       } else {
@@ -68,7 +315,8 @@ async function generateAssistantResponse(
           journey: journey ?? null,
           suggestions: [
             "I want to apply for KCET",
-            "What documents am I missing?",
+            "Check readiness for JEE Main",
+            "What documents do I need for a Passport?",
             "Check my documents",
           ],
         };
@@ -82,9 +330,10 @@ async function generateAssistantResponse(
     case IntentTypes.APPLY_FOR_SERVICE: {
       if (!intent.service) {
         return {
-          response: "Sure! Which examination or public service are you preparing for?",
+          response: "Sure! Which examination, scholarship, or public service are you preparing for?",
           suggestions: [
             "I want to apply for KCET",
+            "Check readiness for JEE Main",
             "I need to apply for a scholarship",
             "I want to apply for a passport",
             "What documents do I need for EPFO?",
@@ -98,9 +347,10 @@ async function generateAssistantResponse(
 
         if (!readiness) {
           return {
-            response: `I can help you check document readiness, but I don't have requirements configured for **${intent.service}** yet. You can try asking about KCET, Government Scholarship, Passport, or EPFO.`,
+            response: `I can help you check document readiness, but I don't have requirements configured for **${intent.service}** yet. You can explore registered examinations, scholarships, and citizen services on the Services page.`,
             suggestions: [
               "I want to apply for KCET",
+              "Check readiness for JEE Main",
               "What do I need for a scholarship?",
               "Passport application requirements",
             ],

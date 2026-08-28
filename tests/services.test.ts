@@ -33,6 +33,7 @@ describe("Phase 3: Generic Service + Requirements Engine", () => {
     await expect(
       prisma.service.create({
         data: {
+          slug: "duplicate-service",
           serviceKey: existing!.serviceKey,
           name: "Duplicate Service",
           shortDescription: "Test",

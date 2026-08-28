@@ -16,13 +16,24 @@ model SystemHealth {
 
 // Synthetic Demo User (Phase 2 - Synthetic demonstration user only)
 model User {
-  id               String             @id @default(uuid())
-  displayName      String
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  documents        Document[]
-  identityEvidence IdentityEvidence[]
-  shares           DocumentShare[]
+  id                     String              @id @default(uuid())
+  displayName            String
+  dateOfBirth            DateTime?
+  gender                 String?
+  nationality            String?             @default("Indian")
+  state                  String?             @default("Karnataka")
+  domicileState          String?             @default("Karnataka")
+  category               String?             @default("General")
+  educationQualification String?             @default("12TH_PASS")
+  annualFamilyIncome     Float?
+  disabilityStatus       Boolean?            @default(false)
+  profileMetadataJson    String?             // JSON for extended attributes & provenance sources
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  documents              Document[]
+  identityEvidence       IdentityEvidence[]
+  shares                 DocumentShare[]
+  activeServices         UserActiveService[]
 
   @@map("users")
 }
@@ -129,46 +140,95 @@ model IdentityEvidence {
   @@map("identity_evidence")
 }
 
-// Public Service / Examination Definition (Phase 3 - Generic Service Engine)
+// Public Service / Examination Definition (Phase 3 & Phase 9 - Database-First Universal Service Registry)
 model Service {
-  id               String               @id @default(uuid())
-  serviceKey       String               @unique
-  name             String
-  shortDescription String
-  category         String               // "EXAMINATION" | "CERTIFICATE" | "SCHOLARSHIP" | "EMPLOYMENT" | "TAX" | "PENSION" | "GRIEVANCE" | "OTHER"
-  providerName     String               // Strictly synthetic (e.g. "Demo Karnataka Examination Authority")
-  active           Boolean              @default(true)
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  requirements     ServiceRequirement[]
+  id                         String                @id @default(uuid())
+  serviceKey                 String                @unique
+  slug                       String                @unique
+  name                       String
+  shortName                  String?
+  shortDescription           String
+  description                String?
+  category                   String                // "EXAMINATION" | "SCHOLARSHIP" | "GOVERNMENT_SCHEME" | "GOVERNMENT_SERVICE" | "CERTIFICATE" | "EMPLOYMENT" | "EDUCATION" | "OTHER"
+  providerName               String                // Strictly synthetic or reference authority
+  authority                  String?
+  jurisdiction               String?
+  officialWebsite            String?
+  officialApplicationUrl     String?
+  version                    String                @default("1.0.0")
+  lastReviewedAt             DateTime?
+  lastVerifiedAt             DateTime?
+  provenanceStatus           String                @default("VERIFIED_OFFICIAL") // "VERIFIED_OFFICIAL" | "PROTOTYPE_REFERENCE" | "COMMUNITY_VERIFIED"
+  eligibilitySummary         String?
+  eligibilityRulesJson       String?               // JSON structure for automated eligibility evaluation
+  applicationWindowJson      String?               // JSON structure for application timeline and current window status
+  eligibilitySourceReference String?
+  deadlineSourceReference    String?
+  sourceReference            String?
+  prototypeNotice            String?               @default("DigiReady registry data is based on available official authority information and should be rechecked against the relevant authority before application.")
+  availabilityStatus         String                @default("SUPPORTED") // "SUPPORTED" | "COMING_SOON" | "NOT_CURRENTLY_SUPPORTED"
+  active                     Boolean               @default(true)
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+  requirements               ServiceRequirement[]
+  activePreparations         UserActiveService[]
 
   @@index([category])
+  @@index([slug])
+  @@index([availabilityStatus])
   @@map("services")
 }
 
-// Service Requirement Specification mapping to Canonical Document Types (Phase 3)
+// Service Requirement Specification mapping to Canonical Document Types (Phase 3 & Phase 9)
 model ServiceRequirement {
-  id              String            @id @default(uuid())
-  serviceId       String
-  service         Service           @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-  documentTypeId  String
-  documentType    DocumentType      @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
-  requirementKey  String
-  label           String
-  description     String?
-  requirementType String            // "REQUIRED" | "OPTIONAL" | "CONDITIONAL"
-  conditionKey    String?           // Structured condition identifier (e.g. "DOMICILE_ELIGIBILITY_CLAUSE")
-  sortOrder       Int               @default(0)
-  sourceId        String
-  source          RequirementSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+  id                  String            @id @default(uuid())
+  serviceId           String
+  service             Service           @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  documentTypeId      String
+  documentType        DocumentType      @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
+  requirementKey      String
+  label               String
+  description         String?
+  requirementType     String            // "REQUIRED" | "OPTIONAL" | "CONDITIONAL"
+  requirementCategory String            @default("DOCUMENT_REQUIREMENT") // "DOCUMENT_REQUIREMENT" | "IDENTITY_REQUIREMENT" | "ELIGIBILITY_REQUIREMENT" | "INFORMATION_REQUIREMENT"
+  required            Boolean           @default(true)
+  condition           String?
+  notes               String?
+  priority            Int               @default(0)
+  sourceReference     String?
+  sourceTitle         String?
+  sourceUrl           String?
+  version             String            @default("1.0.0")
+  conditionKey        String?           // Structured condition identifier (e.g. "DOMICILE_ELIGIBILITY_CLAUSE")
+  sortOrder           Int               @default(0)
+  sourceId            String
+  source              RequirementSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
   @@unique([serviceId, requirementKey])
   @@index([serviceId])
   @@index([documentTypeId])
   @@index([sourceId])
   @@map("service_requirements")
+}
+
+// User Active Service Preparation Association (Phase 9)
+model UserActiveService {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serviceId String
+  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  status    String   @default("ACTIVE") // "ACTIVE" | "ARCHIVED" | "COMPLETED"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, serviceId])
+  @@index([userId])
+  @@index([serviceId])
+  @@index([status])
+  @@map("user_active_services")
 }
 
 // Requirement Provenance & Source Metadata (Phase 3 & Phase 5)

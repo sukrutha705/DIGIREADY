@@ -19,6 +19,14 @@ describe("Phase 7.6: End-to-End Citizen Application Journey", () => {
     expect(user).toBeDefined();
     demoUserId = user.id;
 
+    // Reset dynamically uploaded documents to ensure clean baseline
+    await prisma.documentField.deleteMany({
+      where: { document: { userId: demoUserId, imageStorageKey: { not: null } } },
+    });
+    await prisma.document.deleteMany({
+      where: { userId: demoUserId, imageStorageKey: { not: null } },
+    });
+
     demoDocs = await getUserDocuments(demoUserId, undefined, prisma);
     expect(demoDocs.length).toBeGreaterThanOrEqual(6);
   });

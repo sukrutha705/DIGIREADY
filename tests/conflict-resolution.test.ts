@@ -298,6 +298,8 @@ describe("Phase 8.2: Official Conflict Resolution Guidance & Government Correcti
         {
           duplicateResolution: "replace_existing",
           existingDocumentIdToReplace: sslcDocId,
+          documentTypeOverride: "SECONDARY_MARKS_CARD",
+          metadataHints: { candidateName: "Sukrutha K" },
         },
         prisma
       );

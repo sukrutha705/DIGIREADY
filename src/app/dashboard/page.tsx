@@ -6,6 +6,7 @@ import { RecentDocuments } from "@/components/dashboard/RecentDocuments";
 import { AttentionBanner } from "@/components/dashboard/AttentionBanner";
 import { getDemoUser, getUserVaultSummary } from "@/server/vault";
 import { getApplicationJourney } from "@/server/journey/service";
+import { getUserActivePreparations } from "@/server/services/active";
 import { DashboardJourneyCard } from "@/components/dashboard/DashboardJourneyCard";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,11 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const demoUser = await getDemoUser();
   const summary = await getUserVaultSummary(demoUser.id);
-  const activeJourney = await getApplicationJourney(demoUser.id, "KCET");
+  const activePreparations = await getUserActivePreparations(demoUser.id);
+
+  // Default to first active preparation or KCET
+  const primaryServiceSlug = activePreparations.length > 0 ? activePreparations[0].slug : "kcet";
+  const activeJourney = await getApplicationJourney(demoUser.id, primaryServiceSlug);
 
   return (
     <AppShell userDisplayName={demoUser.displayName}>
@@ -21,18 +26,22 @@ export default async function DashboardPage() {
         {/* Welcome Header */}
         <div className="flex flex-col gap-1">
           <span className="text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
-            Citizen Document Wallet
+            Citizen Document Wallet &amp; Application Readiness
           </span>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-3xl">
-            Welcome, {demoUser.displayName}
+            Your Application Readiness
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-            Your digital documents are organized, verified, and ready in your vault.
+            Check your required documents, verify metadata completeness, and detect cross-document conflicts before applying.
           </p>
         </div>
 
-        {/* Primary Application Readiness & Journey Section */}
-        <DashboardJourneyCard journey={activeJourney} />
+        {/* Primary Application Readiness & Multi-Preparation Section */}
+        <DashboardJourneyCard
+          journey={activeJourney}
+          activePreparations={activePreparations}
+          userId={demoUser.id}
+        />
 
         {/* Attention & Status Banner */}
         <AttentionBanner
@@ -58,3 +67,4 @@ export default async function DashboardPage() {
     </AppShell>
   );
 }
+
